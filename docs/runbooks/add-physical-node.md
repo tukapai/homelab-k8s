@@ -11,7 +11,7 @@ LAN 192.168.1.0/24
  ├─ KVM ホストA 192.168.1.35 ── libvirt NAT 192.168.122.0/24
  │                                 ├─ k8s-cp-1     .11
  │                                 └─ k8s-worker-1 .21
- └─ KVM ホストB 192.168.1.188 ── br0（LAN 直結）
+ └─ KVM ホストB 192.168.1.188 ── enp3s0（macvtap で VM を直付け）
                                    └─ k8s-worker-2  192.168.1.22   ← 今回作る
 ```
 
@@ -41,7 +41,7 @@ cd ~/homelab-k8s
 
 ---
 
-## 2. ホスト B: KVM とブリッジ
+## 2. ホスト B: KVM 導入と config.env
 
 ```bash
 git clone <homelab-k8s の URL> ~/homelab-k8s && cd ~/homelab-k8s
@@ -50,34 +50,17 @@ cp config.env.example config.env
 newgrp libvirt
 ```
 
-### br0 ブリッジ（netplan）
+### ネットワークは macvtap（推奨・ブリッジ作成不要）
 
-`ip -br link` で物理 NIC 名を確認（例 `enp1s0`）。
-**SSH が切れる可能性があるので、できれば物理コンソール or `--timeout` で。**
+`NET_MODE=macvtap` にすると、既存 NIC に macvtap で直付けし VM が LAN IP を
+持つ。**ホスト側のブリッジ作成 = netplan 変更が不要**なので SSH 断のリスクがない。
 
-`/etc/netplan/60-br0.yaml`:
+- 制約: **ホスト B 自身と worker-2 VM は直接通信できない**（macvtap の仕様）。
+  Ansible はホスト A から流す、`kubectl` もホスト A なので実運用上は問題なし。
+  ホスト B から VM を見るときは `virsh console k8s-worker-2`。
 
-```yaml
-network:
-  version: 2
-  renderer: networkd
-  ethernets:
-    enp1s0:
-      dhcp4: false
-  bridges:
-    br0:
-      interfaces: [enp1s0]
-      dhcp4: true            # ホストB 自身は DHCP のまま（.188）でよい
-      parameters:
-        stp: false
-        forward-delay: 0
-```
-
-```bash
-sudo netplan try        # 120 秒以内に Enter しなければ自動ロールバック
-sudo netplan apply
-ip -br addr show br0
-```
+（どうしてもホスト B ↔ VM 通信が要るなら `NET_MODE=bridge` + 自分で `br0` を
+作る。その場合は物理コンソールか `at` によるロールバック保険を用意すること。）
 
 ### config.env（ホスト B）
 
@@ -86,17 +69,21 @@ $EDITOR ~/homelab-k8s/config.env
 ```
 
 ```sh
-LIBVIRT_NET="br0"
-NET_MODE="bridge"
-NET_PREFIX="192.168.1"           # worker-2 → 192.168.1.(20+2)=.22
+NET_MODE="macvtap"
+MACVTAP_SOURCE=""                            # 空 = 既定ルートの NIC を自動検出
+NET_PREFIX="192.168.1"                       # worker-2 → 192.168.1.(20+2)=.22
 WORKER_IP_BASE="20"
 VM_GATEWAY="192.168.1.1"
-VM_NAMESERVERS="192.168.1.1"
-VM_ROUTES="192.168.122.0/24,192.168.1.35"   # 1台目 subnet への経路
-WORKER_VCPUS="<フルスペック>"     # 例: nproc - 1
-WORKER_RAM_MB="<フルスペック>"    # 例: 総メモリ - 2048
-WORKER_DISK_GB="<空きに応じて>"   # 例: 200
+VM_NAMESERVERS="192.168.1.1 1.1.1.1"
+VM_ROUTES="192.168.122.0/24,192.168.1.35"    # 1台目 subnet への経路
+WORKER_VCPUS="<フルスペック>"                # 例: nproc - 2
+WORKER_RAM_MB="<フルスペック>"               # 例: 総メモリ MiB - 10240
+WORKER_DISK_GB="<空きに応じて>"              # 例: 400（qcow2 なので実消費は使った分）
 ```
+
+> `192.168.1.22` がルーターの DHCP 配布範囲外か確認。範囲内なら別の空き IP に
+> （`WORKER_IP_BASE` 調整 or `VM_IP=192.168.1.xx`）、または `02` が表示する MAC で
+> ルーターに予約を入れる。
 
 ---
 
@@ -107,13 +94,15 @@ cd ~/homelab-k8s
 ROLE=worker NODE_NUM=2 ./scripts/02-create-node-vm.sh
 ```
 
-- LAN 直結・静的 IP `192.168.1.22`・GW `192.168.1.1`
+- macvtap 直付け・静的 IP `192.168.1.22`・GW `192.168.1.1`
 - `192.168.122.0/24` への経路を cloud-init で設定
-- 最後に `ssh ubuntu@192.168.1.22` が通ることを確認
+- macvtap のため**ホスト B からは SSH 確認不可**。60 秒待って次へ。
+  ホスト B で見るなら `virsh --connect qemu:///system console k8s-worker-2`
 
-疎通確認（worker-2 VM 内から）:
+疎通確認（**ホスト A から** worker-2 に SSH して VM 内で）:
 
 ```bash
+# ホスト A で:
 ssh ubuntu@192.168.1.22
 ping -c2 192.168.122.11      # cp に届く（04-interconnect + 静的経路）
 ping -c2 192.168.122.21      # worker-1

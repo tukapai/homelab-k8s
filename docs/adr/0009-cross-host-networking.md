@@ -22,9 +22,13 @@ ADR-0003 の「物理ノード追加」を実施する。2 台目の物理マシ
 
 ## Decision
 
-1. **2 台目の worker は host B 上の VM を LAN ブリッジ（`br0`）で
-   `192.168.1.0/24` に直結**。VM に静的 IP（例 `192.168.1.22`、`config.env` の
-   `NET_MODE=bridge` / `NET_PREFIX=192.168.1`）を cloud-init で設定。
+1. **2 台目の worker は host B 上の VM を `192.168.1.0/24` に直結**。
+   方式は **macvtap（`NET_MODE=macvtap`）を既定**とする。既存 NIC に直付けする
+   ので host B 側のブリッジ作成（netplan 変更 = SSH 断リスク）が不要。
+   VM に静的 IP（例 `192.168.1.22`）を cloud-init で設定。
+   - 制約: macvtap では **host B 自身と worker VM が直接通信できない**。
+     Ansible / kubectl は host A から流すので実運用上は許容。
+   - host B ↔ VM 通信が要る場合のみ `NET_MODE=bridge` +（手動で `br0` 作成）。
 
 2. **1 台目のホストで、libvirt subnet ↔ LAN の間だけ NAT を無効化**する。
    `scripts/04-interconnect.sh add`:
