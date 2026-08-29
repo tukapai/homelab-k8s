@@ -1,8 +1,12 @@
 # ADR-0002: インターネット公開は Cloudflare Tunnel
 
-**Status:** Accepted
+**Status:** Accepted（内部 upstream は ADR-0010 で ingress-nginx → **Kong** に変更）
 **Date:** 2026-08-29
 **Deciders:** Masashi Otsuka（単独メンテナ）
+
+> 更新: cloudflared の接続先はクラスタ内 **Kong proxy Service**
+> （`kong-kong-proxy.kong.svc.cluster.local:80`）。以下の本文で ingress-nginx と
+> あるのは Kong に読み替える。Cloudflare Tunnel を使う判断自体は不変。
 
 ## Context
 

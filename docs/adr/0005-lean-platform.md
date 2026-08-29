@@ -1,8 +1,12 @@
 # ADR-0005: MetalLB / cert-manager は当面入れない
 
-**Status:** Accepted
+**Status:** Accepted（Ingress は ADR-0010 で ingress-nginx → **Kong** に変更。
+MetalLB / cert-manager 不要の判断は不変）
 **Date:** 2026-08-29
 **Deciders:** Masashi Otsuka（単独メンテナ）
+
+> 更新: 唯一の Ingress コントローラは **Kong Ingress Controller**（DB-less、
+> `Service.type: ClusterIP`）。以下の本文の ingress-nginx は Kong に読み替える。
 
 ## Context
 
