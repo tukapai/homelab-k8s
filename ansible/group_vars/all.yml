@@ -23,6 +23,6 @@ containerd_config: /etc/containerd/config.toml
 argocd_version: "v2.13.3"          # 最新は https://github.com/argoproj/argo-cd/releases で確認
 argocd_namespace: "argocd"
 # ADR-0007 の homelab-gitops リポジトリ。空なら root Application を作らない。
-gitops_repo_url: ""               # 例: git@github.com:youruser/homelab-gitops.git
+gitops_repo_url: "https://github.com/tukapai/homelab-gitops.git"
 gitops_repo_path: "bootstrap/children"
 gitops_target_revision: "main"
