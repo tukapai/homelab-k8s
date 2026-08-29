@@ -33,9 +33,13 @@ sudo systemctl enable --now libvirtd
 echo "==> 現在のユーザーを libvirt / kvm グループに追加"
 sudo usermod -aG libvirt,kvm "$USER"
 
-echo "==> '${LIBVIRT_NET}' ネットワークを起動・自動起動化"
-sudo virsh net-start   "${LIBVIRT_NET}" 2>/dev/null || true
-sudo virsh net-autostart "${LIBVIRT_NET}"
+if [[ "${NET_MODE:-nat}" == "bridge" ]] || ! sudo virsh net-info "${LIBVIRT_NET}" &>/dev/null; then
+    echo "==> '${LIBVIRT_NET}' は libvirt ネットワークではない（bridge モード）→ ネットワーク設定はスキップ"
+else
+    echo "==> '${LIBVIRT_NET}' ネットワークを起動・自動起動化"
+    sudo virsh net-start   "${LIBVIRT_NET}" 2>/dev/null || true
+    sudo virsh net-autostart "${LIBVIRT_NET}"
+fi
 
 echo
 echo "==> 動作確認"
