@@ -424,11 +424,13 @@ ssh -N -L 8443:<CP_IP>:30443 "$KVM_HOST"
 
 | 項目 | 値 |
 |---|---|
-| KVM ホスト | Ubuntu 24.04（AMD-V, 12 vCPU / 64GB RAM 相当）|
-| control-plane VM | `k8s-cp-1` / `<NET_PREFIX>.11` / 4 vCPU / 8GB / 60GB |
-| worker VM | `k8s-worker-1` / `<NET_PREFIX>.21` / 2 vCPU / 4GB / 40GB |
+| KVM ホスト A | Ubuntu 24.04（AMD-V, 12 vCPU / 60GB RAM）/ libvirt NAT 192.168.122.0/24 |
+| KVM ホスト B | Ubuntu 24.04（同等）/ macvtap 直付け（ADR-0009）|
+| control-plane VM | `k8s-cp-1` / 192.168.122.11 / 4 vCPU / 8GB / 60GB（taint 付き）|
+| worker VM 1 | `k8s-worker-1` / 192.168.122.21 / 2 vCPU / 4GB / 40GB（ホスト A）|
+| worker VM 2 | `k8s-worker-2` / 192.168.1.22 / 10 vCPU / 50GB / 400GB（ホスト B）|
 | Kubernetes | v1.31（`pkgs.k8s.io`）|
-| ランタイム / CNI | containerd + SystemdCgroup / Flannel |
+| ランタイム / CNI | containerd + SystemdCgroup / Flannel（跨ぎ VXLAN 確認済み）|
 | アドオン | metrics-server（任意）、Kubernetes Dashboard（任意）|
 
 ---
