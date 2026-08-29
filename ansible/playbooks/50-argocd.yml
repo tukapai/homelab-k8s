@@ -1,0 +1,99 @@
+---
+# Argo CD をブートストラップする（ADR-0001）。
+# これ以降のプラットフォーム/アプリは Argo CD が homelab-gitops リポジトリから
+# 同期する（このリポジトリでは面倒を見ない）。
+#
+#   cd ansible && ansible-playbook playbooks/50-argocd.yml
+#
+# gitops_repo_url を group_vars/all.yml か -e で指定すると、
+# app-of-apps の root Application まで作成する。
+- name: Bootstrap Argo CD
+  hosts: control_plane
+  become: true
+  vars:
+    kc: "--kubeconfig /etc/kubernetes/admin.conf"
+  tasks:
+    - name: Create argocd namespace
+      ansible.builtin.command: >-
+        kubectl {{ kc }} create namespace {{ argocd_namespace }}
+        --dry-run=client -o yaml
+      register: ns_yaml
+      changed_when: false
+
+    - name: Apply argocd namespace
+      ansible.builtin.shell: "kubectl {{ kc }} apply -f -"
+      args:
+        stdin: "{{ ns_yaml.stdout }}"
+      register: ns_apply
+      changed_when: "'created' in ns_apply.stdout"
+
+    - name: Install Argo CD ({{ argocd_version }})
+      ansible.builtin.command: >-
+        kubectl {{ kc }} apply --server-side --force-conflicts
+        -n {{ argocd_namespace }}
+        -f https://raw.githubusercontent.com/argoproj/argo-cd/{{ argocd_version }}/manifests/install.yaml
+      register: argo_install
+      changed_when: "'created' in argo_install.stdout or 'configured' in argo_install.stdout"
+
+    - name: Wait for Argo CD workloads
+      ansible.builtin.command: >-
+        kubectl {{ kc }} -n {{ argocd_namespace }}
+        rollout status {{ item }} --timeout=300s
+      loop:
+        - deployment/argocd-server
+        - deployment/argocd-repo-server
+        - deployment/argocd-redis
+        - statefulset/argocd-application-controller
+      changed_when: false
+
+    - name: Read initial admin password
+      ansible.builtin.shell: >-
+        set -o pipefail;
+        kubectl {{ kc }} -n {{ argocd_namespace }} get secret argocd-initial-admin-secret
+        -o jsonpath={.data.password} | base64 -d
+      args:
+        executable: /bin/bash
+      register: argocd_pw
+      changed_when: false
+      failed_when: false
+
+    - name: Create app-of-apps root Application
+      when: gitops_repo_url | length > 0
+      ansible.builtin.shell: "kubectl {{ kc }} apply -f -"
+      args:
+        stdin: |
+          apiVersion: argoproj.io/v1alpha1
+          kind: Application
+          metadata:
+            name: root
+            namespace: {{ argocd_namespace }}
+            finalizers:
+              - resources-finalizer.argocd.argoproj.io
+          spec:
+            project: default
+            source:
+              repoURL: {{ gitops_repo_url }}
+              path: {{ gitops_repo_path }}
+              targetRevision: {{ gitops_target_revision }}
+              directory:
+                recurse: true
+            destination:
+              server: https://kubernetes.default.svc
+              namespace: {{ argocd_namespace }}
+            syncPolicy:
+              automated:
+                prune: true
+                selfHeal: true
+              syncOptions:
+                - CreateNamespace=true
+      register: root_app
+      changed_when: "'created' in root_app.stdout"
+
+    - name: Next steps
+      ansible.builtin.debug:
+        msg:
+          - "Argo CD 導入完了。"
+          - "admin パスワード: {{ argocd_pw.stdout | default('(secret 消費済み。argocd admin initial-password で再取得不可)') }}"
+          - "UI へ: kubectl -n {{ argocd_namespace }} port-forward svc/argocd-server 8080:443  (Mac からは SSH トンネル併用)"
+          - "{{ 'root Application を作成済み。gitops リポジトリの同期を確認。' if gitops_repo_url | length > 0 else 'gitops_repo_url 未設定。homelab-gitops を用意してから -e gitops_repo_url=... で再実行。' }}"
+          - "private リポの場合は先に repo 資格情報を登録: argocd repo add <url> --ssh-private-key-path <key>  もしくは repo Secret を適用"

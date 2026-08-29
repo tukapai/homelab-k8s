@@ -54,7 +54,8 @@ homelab-k8s/
 ├── LICENSE                     MIT
 ├── docs/
 │   ├── qiita-article.md        解説記事ドラフト
-│   └── adr/                    アプリ/ミドルウェア運用の設計判断(ADR)
+│   ├── adr/                    アプリ/ミドルウェア運用の設計判断(ADR)
+│   └── runbooks/               物理ノード追加 / PG リストア / 全損復旧
 ├── scripts/
 │   ├── lib.sh                   共通関数（config 読込 / ログ / MAC 生成 / ノード解決）
 │   ├── 01-install-kvm-host.sh   KVM ホスト初期化
@@ -74,7 +75,8 @@ homelab-k8s/
 │       ├── 20-control-plane.yml kubeadm init + Flannel + taint + kubeconfig 回収
 │       ├── 30-workers.yml       kubeadm join
 │       ├── 40-web-console.yml   Kubernetes Dashboard（任意・site.yml 非含）
-│       └── 42-metrics-server.yml metrics-server（任意・kubectl top / GUI グラフ用）
+│       ├── 42-metrics-server.yml metrics-server（任意・kubectl top / GUI グラフ用）
+│       └── 50-argocd.yml        Argo CD ブートストラップ（ADR-0001, 以降は GitOps）
 ├── mac/                         Mac から見るための手順とファイル（mac/README.md）
 └── logs/                        スクリプト／Ansible の実行ログ（gitignore）
 ```
@@ -280,6 +282,31 @@ kubectl get pods -A
 
 metrics-server を導入し、kubeadm ノード向けに `--kubelet-insecure-tls` を付与、
 `kubectl top nodes` が返るまで待機。**導入済み**。冪等。
+
+### `playbooks/50-argocd.yml` — hosts: control_plane（ADR-0001）
+
+Argo CD をブートストラップする。**以降のプラットフォーム/アプリは
+このリポジトリでは管理せず、Argo CD が `homelab-gitops` から同期する**
+（ADR-0007）。
+
+```bash
+cd ansible
+# homelab-gitops を作ってから:
+ansible-playbook playbooks/50-argocd.yml -e gitops_repo_url=git@github.com:you/homelab-gitops.git
+```
+
+- `argocd` namespace に Argo CD（バージョンは `group_vars/all.yml` の `argocd_version`）
+- `gitops_repo_url` があれば app-of-apps の `root` Application を作成
+- 初期 admin パスワードを表示
+- private リポは別途 repo 資格情報の登録が必要（実行後の案内 / runbook 参照）
+
+## 運用 Runbook
+
+| Runbook | 内容 |
+|---|---|
+| [add-physical-node.md](docs/runbooks/add-physical-node.md) | 2 台目の物理マシンを worker として追加、暫定策の解除 |
+| [restore-postgres.md](docs/runbooks/restore-postgres.md) | CloudNativePG のバックアップ／リストア（PITR、DR）|
+| [backup-and-recovery.md](docs/runbooks/backup-and-recovery.md) | 何を退避するか、全損からの復旧手順、sealing key 管理 |
 
 ### `playbooks/40-web-console.yml` — hosts: control_plane（任意）
 

@@ -11,8 +11,19 @@ apiserver_advertise_address: "{{ hostvars[groups['control_plane'][0]]['ansible_h
 
 # true  … single node。control-plane の taint を外して Pod も載せる
 # false … worker を分ける通常構成。control-plane に taint を付け直す
-#         （worker ノードを追加したのでこちらに変更）
-single_node_cluster: false
+#
+# ADR-0003（暫定）: 物理 worker ノードが来るまでは true にして、
+# プラットフォーム(Argo CD 等)を cp+worker に分散させる。
+# ステートフルは nodeSelector で worker 固定。物理ノード join 時に false へ戻す。
+single_node_cluster: true
 
 # containerd
 containerd_config: /etc/containerd/config.toml
+
+# --- Argo CD (playbooks/50-argocd.yml, ADR-0001) ---
+argocd_version: "v2.13.3"          # 最新は https://github.com/argoproj/argo-cd/releases で確認
+argocd_namespace: "argocd"
+# ADR-0007 の homelab-gitops リポジトリ。空なら root Application を作らない。
+gitops_repo_url: ""               # 例: git@github.com:youruser/homelab-gitops.git
+gitops_repo_path: "bootstrap/children"
+gitops_target_revision: "main"
