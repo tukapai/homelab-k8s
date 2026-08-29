@@ -18,6 +18,7 @@
 | [0004](0004-stateful-middleware.md) | PostgreSQL は CloudNativePG、queue/cache は Redis | Accepted |
 | [0005](0005-lean-platform.md) | MetalLB / cert-manager は当面入れない | Accepted |
 | [0006](0006-secrets-management.md) | Secret 管理方式 | Proposed |
+| [0007](0007-repository-topology.md) | リポジトリ構成（infra / gitops / アプリ を分割）| Accepted |
 
 ## フォーマット
 

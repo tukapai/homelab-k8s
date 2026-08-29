@@ -110,8 +110,8 @@ UI がある分 1人での状態把握・トラブルシュートが速く、GUI
 
 ## Action Items
 
-1. [ ] `gitops` リポジトリ（または本リポジトリ内 `gitops/`）の構成を確定
-       （`bootstrap/` `platform/` `apps/<app>/{base,overlays/{dev,prod}}`）
+1. [ ] `homelab-gitops` リポジトリの構成を確定（ADR-0007）
+       （`bootstrap/` `platform/` `apps/<app>/overlays/{dev,prod}`）
 2. [ ] `ansible/playbooks/50-argocd.yml` で Argo CD を導入（Helm or manifest）
 3. [ ] `app-of-apps` の root Application を作成
 4. [ ] Argo CD 管理外の初期リソース（namespace 等）の扱いを決める
