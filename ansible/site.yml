@@ -1,0 +1,6 @@
+---
+# クラスタ全体を構築する。
+#   ansible-playbook site.yml
+- import_playbook: playbooks/10-common.yml
+- import_playbook: playbooks/20-control-plane.yml
+- import_playbook: playbooks/30-workers.yml

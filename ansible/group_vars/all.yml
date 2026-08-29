@@ -1,0 +1,18 @@
+---
+# Kubernetes バージョン（pkgs.k8s.io のマイナー系列）
+kube_version: "1.31"
+
+# CNI: flannel（シンプル）。Pod CIDR は flannel の既定に合わせる。
+pod_network_cidr: "10.244.0.0/16"
+flannel_manifest_url: "https://github.com/flannel-io/flannel/releases/latest/download/kube-flannel.yml"
+
+# kubeadm が API サーバを広告するアドレス = control-plane の ansible_host
+apiserver_advertise_address: "{{ hostvars[groups['control_plane'][0]]['ansible_host'] }}"
+
+# true  … single node。control-plane の taint を外して Pod も載せる
+# false … worker を分ける通常構成。control-plane に taint を付け直す
+#         （worker ノードを追加したのでこちらに変更）
+single_node_cluster: false
+
+# containerd
+containerd_config: /etc/containerd/config.toml

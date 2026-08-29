@@ -1,0 +1,145 @@
+---
+# Kubernetes Dashboard（ブラウザで見る Web 管理コンソール）を導入する。
+# 任意。site.yml には含めず、必要なときだけ実行:
+#   cd ansible && ansible-playbook playbooks/40-web-console.yml
+#
+# 導入後は KVM ホストで scripts/40-expose-console.sh を実行し、
+# Mac のブラウザから https://<KVMホストIP>:8443 で開く。
+- name: Deploy Kubernetes Dashboard
+  hosts: control_plane
+  become: true
+  vars:
+    kc: "--kubeconfig /etc/kubernetes/admin.conf"
+    dashboard_version: "v2.7.0"
+    dashboard_nodeport: 30443
+  tasks:
+    - name: Apply upstream Dashboard manifest
+      ansible.builtin.command: >-
+        kubectl {{ kc }} apply -f
+        https://raw.githubusercontent.com/kubernetes/dashboard/{{ dashboard_version }}/aio/deploy/recommended.yaml
+      register: dash
+      changed_when: "'created' in dash.stdout or 'configured' in dash.stdout"
+
+    - name: NodePort service + admin ServiceAccount + static token
+      ansible.builtin.copy:
+        dest: /tmp/dashboard-extra.yaml
+        mode: "0644"
+        content: |
+          apiVersion: v1
+          kind: Service
+          metadata:
+            name: kubernetes-dashboard-nodeport
+            namespace: kubernetes-dashboard
+          spec:
+            type: NodePort
+            selector:
+              k8s-app: kubernetes-dashboard
+            ports:
+              - port: 443
+                targetPort: 8443
+                nodePort: {{ dashboard_nodeport }}
+          ---
+          apiVersion: v1
+          kind: ServiceAccount
+          metadata:
+            name: dashboard-admin
+            namespace: kubernetes-dashboard
+          ---
+          apiVersion: rbac.authorization.k8s.io/v1
+          kind: ClusterRoleBinding
+          metadata:
+            name: dashboard-admin
+          roleRef:
+            apiGroup: rbac.authorization.k8s.io
+            kind: ClusterRole
+            name: cluster-admin
+          subjects:
+            - kind: ServiceAccount
+              name: dashboard-admin
+              namespace: kubernetes-dashboard
+          ---
+          apiVersion: v1
+          kind: Secret
+          metadata:
+            name: dashboard-admin-token
+            namespace: kubernetes-dashboard
+            annotations:
+              kubernetes.io/service-account.name: dashboard-admin
+          type: kubernetes.io/service-account-token
+
+    - name: Apply extras
+      ansible.builtin.command: kubectl {{ kc }} apply -f /tmp/dashboard-extra.yaml
+      register: extra
+      changed_when: "'created' in extra.stdout or 'configured' in extra.stdout"
+
+    - name: Wait for token to be populated
+      ansible.builtin.command: >-
+        kubectl {{ kc }} -n kubernetes-dashboard get secret dashboard-admin-token
+        -o jsonpath={.data.token}
+      register: tok
+      until: tok.stdout | length > 0
+      retries: 10
+      delay: 3
+      changed_when: false
+
+    - name: Decode login token
+      ansible.builtin.shell: >-
+        set -o pipefail;
+        kubectl {{ kc }} -n kubernetes-dashboard get secret dashboard-admin-token
+        -o jsonpath={.data.token} | base64 -d
+      args:
+        executable: /bin/bash
+      register: token_plain
+      changed_when: false
+
+    - name: Save token to control node
+      ansible.builtin.copy:
+        content: "{{ token_plain.stdout }}\n"
+        dest: /home/ubuntu/dashboard-token.txt
+        owner: ubuntu
+        group: ubuntu
+        mode: "0600"
+
+    - name: Fetch token to the Ansible controller
+      ansible.builtin.fetch:
+        src: /home/ubuntu/dashboard-token.txt
+        dest: "{{ playbook_dir | dirname }}/../mac/dashboard-token.txt"
+        flat: true
+
+    - name: Read cluster CA (base64)
+      ansible.builtin.slurp:
+        src: /etc/kubernetes/pki/ca.crt
+      register: ca_b64
+
+    - name: Build a kubeconfig that embeds the Dashboard SA token
+      # Dashboard の「Kubeconfig」ログインはトークンを含む kubeconfig が必要
+      # （クライアント証明書だけの admin.conf は不可）。これを Mac に置いて選ぶ。
+      ansible.builtin.copy:
+        dest: "{{ playbook_dir | dirname }}/../mac/dashboard.kubeconfig"
+        mode: "0600"
+        content: |
+          apiVersion: v1
+          kind: Config
+          clusters:
+            - name: kvm-k8s
+              cluster:
+                server: https://{{ apiserver_advertise_address }}:6443
+                certificate-authority-data: {{ ca_b64.content }}
+          users:
+            - name: dashboard-admin
+              user:
+                token: {{ token_plain.stdout }}
+          contexts:
+            - name: dashboard-admin@kvm-k8s
+              context:
+                cluster: kvm-k8s
+                user: dashboard-admin
+          current-context: dashboard-admin@kvm-k8s
+
+    - name: How to access
+      ansible.builtin.debug:
+        msg:
+          - "NodePort {{ dashboard_nodeport }} で kubernetes-dashboard を公開しました。"
+          - "KVM ホストで:  ./scripts/40-expose-console.sh add"
+          - "Mac ブラウザ:  https://<KVMホストIP>:8443"
+          - "ログイン: mac/dashboard-token.txt のトークン、または mac/dashboard.kubeconfig を選択"

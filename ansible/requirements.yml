@@ -1,0 +1,6 @@
+---
+# apt の `ansible` パッケージには同梱されているが、pip 版 ansible-core だけの
+# 場合はこれを入れる:  ansible-galaxy collection install -r requirements.yml
+collections:
+  - name: community.general
+  - name: ansible.posix

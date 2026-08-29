@@ -1,0 +1,132 @@
+---
+# 全ノード共通のセットアップ:
+#   - swap 無効化
+#   - カーネルモジュール / sysctl
+#   - containerd（SystemdCgroup 有効）
+#   - kubeadm / kubelet / kubectl インストール
+- name: Common Kubernetes node setup
+  hosts: k8s
+  become: true
+  tasks:
+    - name: Disable swap now
+      ansible.builtin.command: swapoff -a
+      changed_when: false
+
+    - name: Remove swap entries from /etc/fstab
+      ansible.builtin.replace:
+        path: /etc/fstab
+        regexp: '^(.+\s+swap\s+.+)$'
+        replace: '# \1'
+
+    - name: Load kernel modules
+      community.general.modprobe:
+        name: "{{ item }}"
+        state: present
+      loop: [overlay, br_netfilter]
+
+    - name: Persist kernel modules
+      ansible.builtin.copy:
+        dest: /etc/modules-load.d/k8s.conf
+        content: "overlay\nbr_netfilter\n"
+        mode: "0644"
+
+    - name: Sysctl params for Kubernetes networking
+      ansible.builtin.copy:
+        dest: /etc/sysctl.d/99-kubernetes-cri.conf
+        mode: "0644"
+        content: |
+          net.bridge.bridge-nf-call-iptables  = 1
+          net.bridge.bridge-nf-call-ip6tables = 1
+          net.ipv4.ip_forward                 = 1
+      notify: Reload sysctl
+
+    - name: Apply sysctl now
+      ansible.builtin.command: sysctl --system
+      changed_when: false
+
+    - name: Install containerd and prerequisites
+      ansible.builtin.apt:
+        name:
+          - containerd
+          - apt-transport-https
+          - ca-certificates
+          - curl
+          - gpg
+          - conntrack   # kubeadm preflight が要求
+          - socat       # kubectl port-forward などが利用
+          - ethtool
+        update_cache: true
+        state: present
+
+    - name: Ensure /etc/containerd exists
+      ansible.builtin.file:
+        path: /etc/containerd
+        state: directory
+        mode: "0755"
+
+    - name: Generate default containerd config
+      ansible.builtin.shell: containerd config default > {{ containerd_config }}
+      args:
+        creates: "{{ containerd_config }}"
+
+    - name: Enable SystemdCgroup in containerd
+      ansible.builtin.replace:
+        path: "{{ containerd_config }}"
+        regexp: 'SystemdCgroup = false'
+        replace: 'SystemdCgroup = true'
+      notify: Restart containerd
+
+    - name: Ensure containerd is running
+      ansible.builtin.systemd:
+        name: containerd
+        state: started
+        enabled: true
+
+    - name: Create apt keyrings dir
+      ansible.builtin.file:
+        path: /etc/apt/keyrings
+        state: directory
+        mode: "0755"
+
+    - name: Add Kubernetes apt key
+      ansible.builtin.get_url:
+        url: "https://pkgs.k8s.io/core:/stable:/v{{ kube_version }}/deb/Release.key"
+        dest: /etc/apt/keyrings/kubernetes-apt-keyring.asc
+        mode: "0644"
+        force: true
+
+    - name: Add Kubernetes apt repository
+      ansible.builtin.apt_repository:
+        repo: >-
+          deb [signed-by=/etc/apt/keyrings/kubernetes-apt-keyring.asc]
+          https://pkgs.k8s.io/core:/stable:/v{{ kube_version }}/deb/ /
+        filename: kubernetes
+        state: present
+
+    - name: Install kubelet, kubeadm, kubectl
+      ansible.builtin.apt:
+        name: [kubelet, kubeadm, kubectl]
+        update_cache: true
+        state: present
+
+    - name: Hold kube packages
+      ansible.builtin.dpkg_selections:
+        name: "{{ item }}"
+        selection: hold
+      loop: [kubelet, kubeadm, kubectl]
+
+    - name: Enable kubelet
+      ansible.builtin.systemd:
+        name: kubelet
+        enabled: true
+        state: started
+
+  handlers:
+    - name: Reload sysctl
+      ansible.builtin.command: sysctl --system
+      changed_when: false
+
+    - name: Restart containerd
+      ansible.builtin.systemd:
+        name: containerd
+        state: restarted

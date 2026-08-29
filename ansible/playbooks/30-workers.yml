@@ -1,0 +1,26 @@
+---
+# worker ノードをクラスタに join させる。
+# 事前に inventory.ini の [workers] にホストを追加し、10-common.yml を
+# そのホストにも適用しておくこと（site.yml は自動でやる）。
+- name: Join worker nodes
+  hosts: workers
+  become: true
+  tasks:
+    - name: Check if already joined
+      ansible.builtin.stat:
+        path: /etc/kubernetes/kubelet.conf
+      register: kubelet_conf
+
+    - name: Get join command from control-plane
+      ansible.builtin.command: kubeadm token create --print-join-command
+      delegate_to: "{{ groups['control_plane'][0] }}"
+      run_once: true
+      register: join_cmd
+      changed_when: false
+      when: not kubelet_conf.stat.exists
+
+    - name: Run kubeadm join
+      ansible.builtin.command: >-
+        {{ join_cmd.stdout }} --cri-socket=unix:///run/containerd/containerd.sock
+      when: not kubelet_conf.stat.exists
+      changed_when: true

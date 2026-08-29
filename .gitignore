@@ -1,0 +1,18 @@
+# --- 環境依存の実ファイル（テンプレートの *.example のみコミット）---
+/config.env
+/ansible/inventory.ini
+
+# --- 認証情報・生成物 ---
+/ansible/kubeconfig
+/mac/kubeconfig-tunnel
+/mac/dashboard.kubeconfig
+/mac/dashboard-token.txt
+
+# --- 実行ログ ---
+/logs/*
+!/logs/.gitkeep
+
+# --- その他 ---
+*.retry
+*.log
+.DS_Store

@@ -1,0 +1,111 @@
+---
+# control-plane を kubeadm init で構築し、CNI(flannel) を導入する。
+- name: Initialize control-plane
+  hosts: control_plane
+  become: true
+  tasks:
+    - name: Check if cluster is already initialized
+      ansible.builtin.stat:
+        path: /etc/kubernetes/admin.conf
+      register: kube_admin_conf
+
+    - name: kubeadm init
+      ansible.builtin.command:
+        cmd: >-
+          kubeadm init
+          --pod-network-cidr={{ pod_network_cidr }}
+          --apiserver-advertise-address={{ apiserver_advertise_address }}
+          --cri-socket=unix:///run/containerd/containerd.sock
+      when: not kube_admin_conf.stat.exists
+      register: kubeadm_init
+      changed_when: kubeadm_init.rc == 0
+
+    - name: Set up kubeconfig for the ubuntu user
+      block:
+        - name: Create ~/.kube
+          ansible.builtin.file:
+            path: /home/ubuntu/.kube
+            state: directory
+            owner: ubuntu
+            group: ubuntu
+            mode: "0755"
+
+        - name: Copy admin.conf
+          ansible.builtin.copy:
+            src: /etc/kubernetes/admin.conf
+            dest: /home/ubuntu/.kube/config
+            remote_src: true
+            owner: ubuntu
+            group: ubuntu
+            mode: "0600"
+
+    - name: Wait for API server
+      ansible.builtin.command: kubectl --kubeconfig /etc/kubernetes/admin.conf get --raw=/healthz
+      register: healthz
+      until: healthz.rc == 0
+      retries: 30
+      delay: 5
+      changed_when: false
+
+    - name: Check flannel presence
+      ansible.builtin.command: >-
+        kubectl --kubeconfig /etc/kubernetes/admin.conf -n kube-flannel
+        get daemonset kube-flannel-ds
+      register: flannel_ds
+      failed_when: false
+      changed_when: false
+
+    - name: Apply flannel CNI
+      ansible.builtin.command: >-
+        kubectl --kubeconfig /etc/kubernetes/admin.conf apply -f {{ flannel_manifest_url }}
+      when: flannel_ds.rc != 0
+      register: flannel_apply
+      changed_when: "'created' in flannel_apply.stdout"
+
+    - name: Set control-plane taint according to single_node_cluster
+      # true  … taint を外して cp にも Pod を載せる
+      # false … taint を付けて cp はシステムコンポーネント専用にする
+      ansible.builtin.command: >-
+        kubectl --kubeconfig /etc/kubernetes/admin.conf taint nodes --all
+        node-role.kubernetes.io/control-plane{{ '-' if (single_node_cluster | bool) else '=:NoSchedule' }}
+        --overwrite
+      register: taint_res
+      failed_when: false
+      changed_when: "'tainted' in taint_res.stdout"
+
+    - name: Generate join command for workers
+      ansible.builtin.command: kubeadm token create --print-join-command
+      register: join_cmd
+      changed_when: false
+
+    - name: Save join command to control node
+      ansible.builtin.copy:
+        content: "{{ join_cmd.stdout }} --cri-socket=unix:///run/containerd/containerd.sock\n"
+        dest: /home/ubuntu/kubeadm-join.sh
+        owner: ubuntu
+        group: ubuntu
+        mode: "0755"
+
+    - name: Fetch kubeconfig to the Ansible controller
+      ansible.builtin.fetch:
+        src: /etc/kubernetes/admin.conf
+        dest: "{{ playbook_dir | dirname }}/kubeconfig"
+        flat: true
+
+    - name: Generate mac/kubeconfig-tunnel (Mac から SSH -L 6443 経由で使う用)
+      # server を 127.0.0.1:6443 に、tls-server-name を control-plane 名にして
+      # 証明書 SAN と一致させる。詳細は mac/README.md
+      ansible.builtin.shell: >-
+        sed -E
+        's#^( *)server: https://.*#\1tls-server-name: {{ inventory_hostname }}\n\1server: https://127.0.0.1:6443#'
+        "{{ playbook_dir | dirname }}/kubeconfig"
+        > "{{ playbook_dir | dirname }}/../mac/kubeconfig-tunnel"
+      delegate_to: localhost
+      become: false
+      changed_when: true
+
+    - name: Show how to use kubeconfig
+      ansible.builtin.debug:
+        msg:
+          - "kubectl(ホスト):  export KUBECONFIG={{ playbook_dir | dirname }}/kubeconfig"
+          - "Mac 用トンネル kubeconfig: mac/kubeconfig-tunnel を生成済み"

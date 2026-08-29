@@ -1,0 +1,29 @@
+# Kubernetes クラスタのインベントリ（テンプレート）
+#
+#   cp inventory.ini.example inventory.ini    してから編集する。
+#   inventory.ini は .gitignore 済み。
+#
+# IP は config.env のアドレス規約に合わせる:
+#   control-plane = ${NET_PREFIX}.11            （既定 192.168.122.11）
+#   worker N      = ${NET_PREFIX}.(20 + N)      （既定 192.168.122.21, .22, …）
+#
+# 最初は single node（control-plane 1台のみ）。worker は
+# scripts/02-create-node-vm.sh で VM を作ってからここに行を足し、
+#   ansible-playbook site.yml         （冪等）
+# を実行する。
+
+[control_plane]
+k8s-cp-1 ansible_host=192.168.122.11
+
+[workers]
+# k8s-worker-1 ansible_host=192.168.122.21
+# k8s-worker-2 ansible_host=192.168.122.22
+
+[k8s:children]
+control_plane
+workers
+
+[k8s:vars]
+ansible_user=ubuntu
+ansible_ssh_private_key_file=~/.ssh/id_ed25519
+ansible_python_interpreter=/usr/bin/python3
