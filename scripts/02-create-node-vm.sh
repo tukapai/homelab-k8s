@@ -45,10 +45,16 @@ if [[ -n "${EXTRA_SSH_PUBKEYS:-}" ]]; then
     _pubkeys+=$'\n'"${EXTRA_SSH_PUBKEYS}"
 fi
 AUTHKEYS_YAML=""
+_keycount=0
 while IFS= read -r _k; do
-    [[ -z "${_k// }" ]] && continue
+    [[ "$_k" == ssh-* || "$_k" == ecdsa-* || "$_k" == sk-* ]] || continue
     AUTHKEYS_YAML+=$'\n'"      - ${_k}"
+    _keycount=$((_keycount + 1))
 done <<< "$_pubkeys"
+if [[ "$NET_MODE" != "nat" && "$_keycount" -lt 2 && -z "${EXTRA_SSH_PUBKEYS:-}" ]]; then
+    echo "WARN: このホストの鍵のみ VM に登録されます。別ホストから Ansible を流すなら"
+    echo "      EXTRA_SSH_PUBKEYS=\"\$(cat /path/to/controller.pub)\" を指定してください" >&2
+fi
 
 # ---- 既存 VM のチェック ------------------------------------------------
 if $VIRSH dominfo "$VM_NAME" &>/dev/null; then
