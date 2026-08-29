@@ -12,12 +12,13 @@
       register: kubelet_conf
 
     - name: Get join command from control-plane
+      # run_once + per-host when は「先頭ホストで when=false」だと丸ごと skip され
+      # join_cmd が未定義になる。when を付けず常に取得する（トークンは短命）。
       ansible.builtin.command: kubeadm token create --print-join-command
       delegate_to: "{{ groups['control_plane'][0] }}"
       run_once: true
       register: join_cmd
       changed_when: false
-      when: not kubelet_conf.stat.exists
 
     - name: Run kubeadm join
       ansible.builtin.command: >-
