@@ -8,6 +8,7 @@
 - 別の物理マシンを node にする拡張にも対応（ブリッジ接続 + `config.env` の変更のみ）
 
 > 関連記事: （Qiita URL をここに）／ ドラフト: [docs/qiita-article.md](docs/qiita-article.md)
+> アプリ/ミドルウェア運用の設計判断: [docs/adr/](docs/adr/)
 
 ## clone 後の準備
 
@@ -51,7 +52,9 @@ $EDITOR config.env ansible/inventory.ini
 homelab-k8s/
 ├── config.env.example          ★ 環境依存の設定（cp して config.env に）
 ├── LICENSE                     MIT
-├── docs/qiita-article.md       解説記事ドラフト
+├── docs/
+│   ├── qiita-article.md        解説記事ドラフト
+│   └── adr/                    アプリ/ミドルウェア運用の設計判断(ADR)
 ├── scripts/
 │   ├── lib.sh                   共通関数（config 読込 / ログ / MAC 生成 / ノード解決）
 │   ├── 01-install-kvm-host.sh   KVM ホスト初期化
