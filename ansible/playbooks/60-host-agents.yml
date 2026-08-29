@@ -1,32 +1,23 @@
 ---
 # KVM ホスト（物理マシン / libvirt / OS）の監視エージェント（ADR-0008）。
 #   - New Relic Infrastructure agent … 常用
-#   - Instana host agent               … 評価目的（instana_enabled=true のとき）
+#
+# Instana host agent（評価目的）は GitOps 外・コミット対象外。
+#   ansible/playbooks/local/60b-instana-host-agent.yml（gitignore）で導入する。
 #
 # localhost（= Ansible 実行ホスト = KVM ホスト）に導入する。sudo 必要。
 #
-#   cd ansible && ansible-playbook playbooks/60-host-agents.yml \
-#     -e newrelic_license_key=XXX \
-#     -e instana_enabled=true -e instana_agent_key=YYY -e instana_download_key=ZZZ \
-#     -e instana_endpoint_host=ingress-red-saas.instana.io
+#   cd ansible && ansible-playbook playbooks/60-host-agents.yml -e newrelic_license_key=XXX
 #
-# キーは -e か Ansible Vault（group_vars/all/vault.yml 等）で渡す。平文コミット禁止。
-- name: Host monitoring agents
+# キーは -e か Ansible Vault で渡す。平文コミット禁止。
+- name: Host monitoring agents (New Relic)
   hosts: localhost
   connection: local
   become: true
   vars:
-    newrelic_license_key: ""          # 必須（常用）
+    newrelic_license_key: ""          # 必須
     newrelic_region: "US"             # US | EU
-    instana_enabled: false
-    instana_agent_key: ""
-    instana_download_key: ""          # 任意（未指定なら agent_key を流用）
-    instana_endpoint_host: "ingress-red-saas.instana.io"
-    instana_endpoint_port: 443
-    instana_zone: "homelab-kvm"
   tasks:
-
-    # ---------- New Relic Infrastructure agent ----------
     - name: NR | fail if no license key
       ansible.builtin.assert:
         that: newrelic_license_key | length > 0
@@ -64,9 +55,6 @@
         mode: "0640"
         content: |
           license_key: {{ newrelic_license_key }}
-          {% if newrelic_region | upper == 'EU' %}
-          staging: false
-          {% endif %}
           display_name: {{ ansible_hostname }}-kvm-host
           custom_attributes:
             role: kvm-host
@@ -79,79 +67,6 @@
         enabled: true
         state: started
 
-    # ---------- Instana host agent（評価目的）----------
-    - name: Instana | check for local .deb
-      ansible.builtin.stat:
-        path: "{{ lookup('env', 'HOME') }}/instana-agent-dynamic.amd64.deb"
-      register: instana_deb
-      when: instana_enabled | bool
-
-    - name: Instana | install from local .deb
-      ansible.builtin.apt:
-        deb: "{{ lookup('env', 'HOME') }}/instana-agent-dynamic.amd64.deb"
-        state: present
-      when:
-        - instana_enabled | bool
-        - instana_deb.stat.exists | default(false)
-
-    - name: Instana | install via setup script (fallback)
-      ansible.builtin.shell: |
-        set -euo pipefail
-        curl -fsSL -o /tmp/instana-setup.sh https://setup.instana.io/agent
-        chmod +x /tmp/instana-setup.sh
-        /tmp/instana-setup.sh -a '{{ instana_agent_key }}' \
-          -d '{{ instana_download_key | default(instana_agent_key, true) }}' \
-          -t dynamic \
-          -e {{ instana_endpoint_host }}:{{ instana_endpoint_port }} \
-          -s
-      args:
-        creates: /opt/instana/agent
-      when:
-        - instana_enabled | bool
-        - not (instana_deb.stat.exists | default(false))
-
-    - name: Instana | backend config
-      ansible.builtin.copy:
-        dest: /opt/instana/agent/etc/instana/com.instana.agent.main.sender.Backend.cfg
-        mode: "0640"
-        content: |
-          host={{ instana_endpoint_host }}
-          port={{ instana_endpoint_port }}
-          protocol=HTTP/2
-          key={{ instana_agent_key }}
-          {% if instana_download_key | length > 0 %}
-          downloadKey={{ instana_download_key }}
-          {% endif %}
-      when: instana_enabled | bool
-      notify: restart instana-agent
-
-    - name: Instana | zone / tags
-      ansible.builtin.copy:
-        dest: /opt/instana/agent/etc/instana/configuration.yaml
-        mode: "0640"
-        content: |
-          com.instana.plugin.generic.hardware:
-            enabled: true
-          com.instana.plugin.host:
-            tags:
-              - homelab
-              - kvm-host
-          com.instana.agent.mode: INFRASTRUCTURE
-          # ゾーン
-          com.instana.plugin.generic.zone:
-            name: {{ instana_zone }}
-      when: instana_enabled | bool
-      notify: restart instana-agent
-
-    - name: Instana | enable service
-      ansible.builtin.systemd:
-        name: instana-agent
-        enabled: true
-        state: started
-      when: instana_enabled | bool
-
   handlers:
     - name: restart newrelic-infra
       ansible.builtin.systemd: { name: newrelic-infra, state: restarted }
-    - name: restart instana-agent
-      ansible.builtin.systemd: { name: instana-agent, state: restarted }

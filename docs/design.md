@@ -285,30 +285,33 @@ Pod / ノード単位の障害は Kubernetes が自己修復。**ホスト全損
 
 ## 11. 監視（ADR-0008）
 
-**New Relic を常用**、**Instana を評価目的（時間箱）で並行稼働**。アプリの計装は
-**OpenTelemetry 1 本**にして、Collector が両者へ fan-out する。
+**New Relic を常用（GitOps 管理）**。**Instana は評価目的で GitOps 外**
+（一時導入・gitignore・撤去前提）。特に検証したいのは Instana の
+「通常エージェント（収集） ↔ バックエンドの AI 機能」の連携。
+アプリの計装は **OpenTelemetry 1 本**（Collector 経由）。
 
 ```
                     ┌──────────────────────────────────┐
-アプリ (OTel SDK) ──▶│ OTel Collector (observability ns) │──┬─▶ Instana agent (OTLP)  ★評価
-                    └──────────────────────────────────┘  └─▶ New Relic OTLP        常用
-
-層1 ホスト/KVM   : New Relic Infra agent（常設） + Instana host agent（評価）
-                  → homelab-k8s/ansible/playbooks/60-host-agents.yml
-層2 k8s/ミドル    : New Relic nri-bundle（常設） + instana-agent DaemonSet（評価）
-                  → homelab-gitops/platform/{newrelic, eval/instana}
-層3 アプリ        : OTel SDK → Collector（上図）
+アプリ (OTel SDK) ──▶│ OTel Collector (observability ns) │──▶ New Relic OTLP   常用/GitOps
+                    └───────────────┬──────────────────┘ (評価中のみ eval-instana overlay で
+                                    ▼                       instana-agent OTLP も追加)
+層1 ホスト/KVM : NR Infra agent（60-host-agents.yml, 常設）
+                Instana host agent（playbooks/local/60b-…, 評価・gitignore）
+層2 k8s/ミドル : NR nri-bundle（gitops platform/newrelic, 常設）
+                instana-agent（platform/eval/instana/install.sh = helm 直接, 評価・gitignore）
+層3 アプリ    : OTel SDK → Collector（上図）
 ```
 
-| 層 | 常用（New Relic）| 評価（Instana）|
+| 層 | 常用（New Relic・GitOps）| 評価（Instana・GitOps 外）|
 |---|---|---|
-| ホスト / KVM | Infra agent（apt, 常設）| host agent（deb, 撤去可）|
+| ホスト / KVM | Infra agent（apt）| host agent（deb / setup script）|
 | k8s / ミドルウェア | nri-bundle（infra/k8s/KSM/logs、Pixie・prometheus 無効）| instana-agent（Operator + DaemonSet）|
-| アプリ | OTel → Collector → NR OTLP | OTel → Collector → instana-agent OTLP |
+| アプリ | OTel → Collector → NR OTLP | 評価中: Collector の ConfigMap を一時差し替え |
 
-- **キー**は SealedSecret（NR license は cluster-wide scope で NR/observability 両 ns 共用）
-- Instana は非力クラスタ + 2 スタック常設不可のため**期限を切る**。撤去手順は
-  [runbooks/instana-eval.md](runbooks/instana-eval.md)
+- NR license は SealedSecret（cluster-wide scope で `newrelic` / `observability` 両 ns 共用）
+- Instana の agent key は評価用スクリプトが直接 `kubectl create secret` / ファイル配置（git 外）
+- Instana は非力クラスタ + 2 スタック常設不可のため**期限を切る**。
+  導入・AI 機能の検証・撤去は `docs/runbooks/instana-eval.md`（gitignore）
 - 評価期間中は監視だけで **~2 CPU / ~2.5GB** 消費（§8 のリソース余裕に注意）
 - 外形監視: healthchecks.io / UptimeRobot で公開ヘルスエンドポイント（別途）
 - 評価後にツールを一本化する判断は別 ADR で

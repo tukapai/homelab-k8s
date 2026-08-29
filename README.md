@@ -79,7 +79,7 @@ homelab-k8s/
 │       ├── 40-web-console.yml   Kubernetes Dashboard（任意・site.yml 非含）
 │       ├── 42-metrics-server.yml metrics-server（任意・kubectl top / GUI グラフ用）
 │       ├── 50-argocd.yml        Argo CD ブートストラップ（ADR-0001, 以降は GitOps）
-│       └── 60-host-agents.yml   KVM ホストの監視エージェント（New Relic 常用 / Instana 評価）
+│       └── 60-host-agents.yml   KVM ホストの New Relic Infra agent（ADR-0008）
 ├── mac/                         Mac から見るための手順とファイル（mac/README.md）
 └── logs/                        スクリプト／Ansible の実行ログ（gitignore）
 ```
@@ -310,7 +310,9 @@ ansible-playbook playbooks/50-argocd.yml -e gitops_repo_url=git@github.com:you/h
 | [add-physical-node.md](docs/runbooks/add-physical-node.md) | 2 台目の物理マシンを worker として追加、暫定策の解除 |
 | [restore-postgres.md](docs/runbooks/restore-postgres.md) | CloudNativePG のバックアップ／リストア（PITR、DR）|
 | [backup-and-recovery.md](docs/runbooks/backup-and-recovery.md) | 何を退避するか、全損からの復旧手順、sealing key 管理 |
-| [instana-eval.md](docs/runbooks/instana-eval.md) | Instana 評価のセットアップと撤去（時間箱）|
+
+> `docs/runbooks/instana-eval.md` と `ansible/playbooks/local/` は Instana 評価用の
+> 一時ファイルで **gitignore**（ADR-0008）。
 
 ### `playbooks/40-web-console.yml` — hosts: control_plane（任意）
 

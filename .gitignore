@@ -12,6 +12,10 @@
 /logs/*
 !/logs/.gitkeep
 
+# --- Instana 評価（一時・コミット対象外・ADR-0008）---
+/ansible/playbooks/local/
+/docs/runbooks/instana-eval.md
+
 # --- その他 ---
 *.retry
 *.log

@@ -9,7 +9,11 @@
 design.md §11 では監視を「段階的に」としていたが、具体を決める。
 
 - **New Relic** をこのインフラの**常用の監視**として使う（既に標準ツール）。
-- **Instana** を**評価目的**で導入し、アプリ・インフラの可観測性を試したい。
+- **Instana** を**評価目的**で導入する。特に検証したいのは
+  **通常のエージェント（データ収集）と Instana バックエンドの AI 機能
+  （Smart Alerts / 自動 Root Cause / AI Assistant / MCP Server）の連携**。
+- Instana は**検証が終わったら削除する前提の一時導入**。関連コード・設定は
+  リポジトリにコミットしない（GitOps 外・gitignore）。
 - したがって当面は **2 つの監視スタックを並行稼働**させる（評価期間）。
 - クラスタは非力（ADR-0003: cp 8GB + worker 4GB を暫定共用）。監視エージェントの
   リソース消費は無視できない。
@@ -40,21 +44,35 @@ app (OTel SDK) ──OTLP──▶ OTel Collector ──┬─▶ Instana agent 
 
 ### 層 1（ホスト / KVM）: 両者のネイティブ host agent を KVM ホストに
 
-`homelab-k8s/ansible/playbooks/60-host-agents.yml` で:
+物理マシン・libvirt・OS メトリクスを取る。k8s の外側なのでここは素直に host agent。
 
 - **New Relic Infrastructure agent**（apt、常設）
+  → `homelab-k8s/ansible/playbooks/60-host-agents.yml`（コミット対象）
 - **Instana host agent**（`instana-agent-dynamic.amd64.deb` / apt、評価期間のみ）
-
-物理マシン・libvirt・OS メトリクスを取る。k8s の外側なのでここは素直に host agent。
+  → `homelab-k8s/ansible/playbooks/local/60b-instana-host-agent.yml`（gitignore）
 
 ### 層 2（Kubernetes / ミドルウェア）: 各社の k8s 統合を Argo CD で
 
 - **New Relic**: `nri-bundle` Helm（infra agent DaemonSet + nri-kubernetes +
   kube-state-metrics + Fluent Bit ログ）。**Pixie と nri-prometheus は当面無効**
-  （非力クラスタ配慮）。**常設**。
+  （非力クラスタ配慮）。**常設・GitOps 管理**。
 - **Instana**: `instana-agent` Helm（Operator + DaemonSet）。PostgreSQL / Redis /
-  nginx / ランタイムを自動ディスカバリ。**評価期間のみ**。
-  `homelab-gitops/platform/eval/` に置き、撤去しやすくする。
+  nginx / ランタイムを自動ディスカバリ。**評価期間のみ・GitOps 外**。
+  `homelab-gitops/platform/eval/instana/install.sh`（helm 直接）で導入・撤去。
+  関連ファイルは gitignore（`/platform/eval/`、`bootstrap/children/platform-eval-*`、
+  `platform/otel-collector/eval-instana/`）。
+
+### Instana の AI 機能の検証方法
+
+AI 機能はすべて**バックエンド側**で、エージェントが送ったデータ
+（メトリクス / トレース / ログ / トポロジ / イベント）を対象に動く。
+エージェント側に AI 用の特別な設定はない。検証は
+`docs/runbooks/instana-eval.md`（gitignore）の §AI 機能の検証:
+
+- Smart Alerts: ベースライン学習 → 意図的な異常 → 発報
+- Incidents / 自動 RCA: 依存障害（DB 停止 → API エラー）で root cause を当てるか
+- AI Assistant: 自然言語 Q&A がデータに基づくか
+- MCP Server: API トークンで起動し、外部 LLM / エージェントが観測データを使えるか
 
 ### 評価の時間箱
 
@@ -103,16 +121,21 @@ Instana は**期限を切る**（例: 4 週間）。評価終了時に
 
 **楽になること**
 - アプリ計装が 1 系統（OTel）。監視ツールの差し替えが exporter 設定だけ。
-- ホスト層は Ansible playbook 1 本で両エージェント。
-- Instana の撤去が容易（gitops の `platform/eval/` を削除 + host agent 停止）。
+- Instana は GitOps 外・gitignore なので、撤去してもリポジトリに痕跡が残らない
+  （`install.sh uninstall` + host playbook `-e instana_state=absent` + Collector を sync 戻し）。
+- New Relic（常用）は GitOps 管理で通常どおり。
 
 **難しくなること / 新たな負担**
 - 評価期間中、監視だけで **~2 CPU / ~2.5GB** をクラスタから食う。
   アプリ/PG/Redis のリソース余裕が減る。requests/limits を注意深く。
 - OTel Collector という新コンポーネントの運用。
-- API キー（New Relic license / Instana agent key）を SealedSecret で管理（ADR-0006）。
+- Instana 評価中は OTel Collector の Argo 自動同期を一時停止して ConfigMap を
+  手差し替えする（`eval-instana/`）。戻し忘れると trace が Instana に流れ続ける。
+- New Relic license は SealedSecret（ADR-0006）。Instana の key は評価用に
+  `install.sh` / host playbook が直接 `kubectl create secret` / ファイル配置（git 外）。
 - New Relic と Instana でメトリクス名・タグ体系が違い、ダッシュボードは各社別。
-- 評価の撤去を**忘れない**運用（カレンダー登録推奨）。
+- 評価の撤去を**忘れない**運用（カレンダー登録必須）。gitignore 済みなので
+  「消し忘れても push で漏れない」が、稼働リソースは残る。
 
 **あとで見直す**
 - 評価結果で監視ツールを一本化 → ADR-000X で決定、不要な方を撤去。
@@ -121,14 +144,21 @@ Instana は**期限を切る**（例: 4 週間）。評価終了時に
 
 ## Action Items
 
-1. [ ] `homelab-gitops/platform/otel-collector/`（Deployment + config、両社へ export）
-2. [ ] `homelab-gitops/platform/newrelic/`（`nri-bundle` Application、最小 values、
-       license key の SealedSecret）
-3. [ ] `homelab-gitops/platform/eval/instana/`（`instana-agent` Application、
-       agent key の SealedSecret）
-4. [ ] `homelab-k8s/ansible/playbooks/60-host-agents.yml`（NR infra agent 常設 +
-       Instana host agent 評価用）
-5. [ ] `app-template`: OTel SDK 初期化のサンプルと chart の `OTEL_*` env 配線
-6. [ ] `docs/runbooks/instana-eval.md`（セットアップ + 撤去手順、評価チェックリスト）
-7. [ ] design.md §11 を本 ADR に合わせて更新
-8. [ ] 評価終了日をカレンダー登録
+**常用（コミット済み）**
+
+1. [x] `homelab-gitops/platform/otel-collector/`（Deployment + config、New Relic へ export）
+2. [x] `homelab-gitops/platform/newrelic/`（`nri-bundle` Application、最小 values）
+3. [x] `homelab-k8s/ansible/playbooks/60-host-agents.yml`（NR infra agent 常設）
+4. [x] `app-template`: chart の `OTEL_*` env 配線 + README に Go SDK 骨子
+5. [x] design.md §11 を本 ADR に合わせて更新
+6. [ ] New Relic license key を `make seal-newrelic` で封入、リージョン設定
+
+**評価（GitOps 外・gitignore）**
+
+7. [x] `homelab-gitops/platform/eval/instana/install.sh`（helm 直接、導入/撤去）
+8. [x] `homelab-k8s/ansible/playbooks/local/60b-instana-host-agent.yml`
+9. [x] `homelab-gitops/platform/otel-collector/eval-instana/`（ConfigMap 一時差し替え）
+10. [x] `docs/runbooks/instana-eval.md`（AI 機能の検証手順 + 撤去 + チェックリスト）
+11. [ ] Instana テナント / agent key / endpoint / API トークンを用意
+12. [ ] 評価終了日をカレンダー登録
+13. [ ] 評価後: ツール一本化を別 ADR で決定、Instana 資産を撤去
