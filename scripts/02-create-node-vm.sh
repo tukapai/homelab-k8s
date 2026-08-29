@@ -37,7 +37,18 @@ if [[ ! -f "$SSH_PUBKEY" ]]; then
     echo "==> SSH 鍵が無いので生成: ${SSH_PUBKEY%.pub}"
     ssh-keygen -t ed25519 -N '' -f "${SSH_PUBKEY%.pub}"
 fi
-PUBKEY_CONTENT="$(cat "$SSH_PUBKEY")"
+# 登録する公開鍵。この KVM ホストの鍵 + 追加鍵（EXTRA_SSH_PUBKEYS）。
+# 2 台目の KVM ホストで作る場合、Ansible 実行ホスト（1 台目）の鍵を渡すこと:
+#   EXTRA_SSH_PUBKEYS="$(ssh <1台目> cat .ssh/id_ed25519.pub)" ROLE=worker NODE_NUM=2 ./scripts/02-...
+_pubkeys="$(cat "$SSH_PUBKEY")"
+if [[ -n "${EXTRA_SSH_PUBKEYS:-}" ]]; then
+    _pubkeys+=$'\n'"${EXTRA_SSH_PUBKEYS}"
+fi
+AUTHKEYS_YAML=""
+while IFS= read -r _k; do
+    [[ -z "${_k// }" ]] && continue
+    AUTHKEYS_YAML+=$'\n'"      - ${_k}"
+done <<< "$_pubkeys"
 
 # ---- 既存 VM のチェック ------------------------------------------------
 if $VIRSH dominfo "$VM_NAME" &>/dev/null; then
@@ -113,8 +124,7 @@ users:
     sudo: "ALL=(ALL) NOPASSWD:ALL"
     shell: /bin/bash
     lock_passwd: true
-    ssh_authorized_keys:
-      - ${PUBKEY_CONTENT}
+    ssh_authorized_keys:${AUTHKEYS_YAML}
 ssh_pwauth: false
 package_update: true
 package_upgrade: false

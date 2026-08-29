@@ -26,6 +26,10 @@ LAN 192.168.1.0/24
       （`ssh-copy-id tukapai@192.168.1.188` or 公開鍵を authorized_keys に）
 - [ ] ホスト A / B とも `git pull` で最新の `homelab-k8s`
 
+> **VM の SSH 鍵**: `02` はスクリプトを実行したホストの鍵を VM に登録する。
+> ホスト B で作る場合、Ansible 実行ホスト（ホスト A）の鍵も渡すこと:
+> `EXTRA_SSH_PUBKEYS="$(ssh tukapai@192.168.1.35 cat .ssh/id_ed25519.pub)"`
+
 ---
 
 ## 1. ホスト A: サブネット間の相互接続（ダウンタイムなし）
@@ -91,10 +95,12 @@ WORKER_DISK_GB="<空きに応じて>"              # 例: 400（qcow2 なので�
 
 ```bash
 cd ~/homelab-k8s
-ROLE=worker NODE_NUM=2 ./scripts/02-create-node-vm.sh
+EXTRA_SSH_PUBKEYS="$(ssh tukapai@192.168.1.35 cat .ssh/id_ed25519.pub)" \
+  ROLE=worker NODE_NUM=2 ./scripts/02-create-node-vm.sh
 ```
 
 - macvtap 直付け・静的 IP `192.168.1.22`・GW `192.168.1.1`
+- ホスト A / B 両方の鍵を VM に登録（Ansible はホスト A から）
 - `192.168.122.0/24` への経路を cloud-init で設定
 - macvtap のため**ホスト B からは SSH 確認不可**。60 秒待って次へ。
   ホスト B で見るなら `virsh --connect qemu:///system console k8s-worker-2`
