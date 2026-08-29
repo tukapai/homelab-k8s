@@ -17,27 +17,27 @@ setup_logging "$0"
 
 ACTION="${1:-add}"
 V="${LIBVIRT_SUBNET_CIDR}"     # libvirt subnet
-L="${LAN_CIDR}"                # LAN
+L="${LAN_CIDR}"               # LAN
 UNIT=/etc/systemd/system/k8s-interconnect.service
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 
-# libvirt の MASQUERADE より前に「LAN 宛はマスカレードしない」を挿す
-NO_SNAT=(-t nat POSTROUTING -s "$V" -d "$L" -j RETURN)
-# libvirt の REJECT より前に双方向 FORWARD ACCEPT
-FWD_IN=(FORWARD -s "$L" -d "$V" -j ACCEPT)
-FWD_OUT=(FORWARD -s "$V" -d "$L" -j ACCEPT)
+# libvirt の内部チェーン（LIBVIRT_PRT / LIBVIRT_FWx）へ jump する前に効かせたいので
+# 各ベースチェーンの先頭(-I ... 1)に挿す。
+rule_nosnat() { sudo iptables -t nat "$1" POSTROUTING -s "$V" -d "$L" -j RETURN; }
+rule_fwd_in() { sudo iptables      "$1" FORWARD      -s "$L" -d "$V" -j ACCEPT; }
+rule_fwd_out(){ sudo iptables      "$1" FORWARD      -s "$V" -d "$L" -j ACCEPT; }
 
 add_rules() {
     sudo sysctl -qw net.ipv4.ip_forward=1
-    sudo iptables -C "${NO_SNAT[@]}" 2>/dev/null || sudo iptables -I "${NO_SNAT[@]}"
-    sudo iptables -C "${FWD_IN[@]}"  2>/dev/null || sudo iptables -I "${FWD_IN[@]}"
-    sudo iptables -C "${FWD_OUT[@]}" 2>/dev/null || sudo iptables -I "${FWD_OUT[@]}"
+    rule_nosnat -C 2>/dev/null || rule_nosnat -I
+    rule_fwd_in -C 2>/dev/null || rule_fwd_in -I
+    rule_fwd_out -C 2>/dev/null || rule_fwd_out -I
     echo "==> $V <-> $L を NAT なしで相互接続"
 }
 del_rules() {
-    sudo iptables -D "${NO_SNAT[@]}" 2>/dev/null || true
-    sudo iptables -D "${FWD_IN[@]}"  2>/dev/null || true
-    sudo iptables -D "${FWD_OUT[@]}" 2>/dev/null || true
+    rule_nosnat -D 2>/dev/null || true
+    rule_fwd_in -D 2>/dev/null || true
+    rule_fwd_out -D 2>/dev/null || true
     echo "==> ルール削除"
 }
 install_unit() {
@@ -62,12 +62,14 @@ EOF
 }
 
 case "$ACTION" in
-    add)            add_rules; install_unit
-                    echo
-                    echo "2 台目以降のノード / VM 側で 1 台目 subnet への経路が必要:"
-                    echo "    ip route add $V via ${KVM_HOST_LAN_IP:-<1台目のLAN IP>}"
-                    echo "（02-create-node-vm.sh の bridge モードは cloud-init で自動設定）"
-                    ;;
+    add)
+        add_rules
+        install_unit
+        echo
+        echo "2 台目以降のノード / VM 側で 1 台目 subnet への経路が必要:"
+        echo "    ip route add $V via ${KVM_HOST_LAN_IP:-<1台目のLAN IP>}"
+        echo "（02-create-node-vm.sh の bridge モードは cloud-init で自動設定）"
+        ;;
     add-rules-only) add_rules ;;
     remove)
         del_rules
@@ -75,8 +77,12 @@ case "$ACTION" in
         sudo rm -f "$UNIT"; sudo systemctl daemon-reload
         ;;
     status)
-        echo "== nat POSTROUTING =="; sudo iptables -t nat -S POSTROUTING | grep -E "$V|$L" || echo "(なし)"
-        echo "== filter FORWARD ==";  sudo iptables -S FORWARD | grep -E "$V|$L" || echo "(なし)"
+        echo "== nat POSTROUTING =="
+        sudo iptables -t nat -S POSTROUTING | grep -E "${V}|${L}" || echo "(なし)"
+        echo "== filter FORWARD =="
+        sudo iptables -S FORWARD | grep -E "${V}|${L}" || echo "(なし)"
+        echo "== libvirt firewall backend =="
+        grep -E '^\s*firewall_backend' /etc/libvirt/network.conf 2>/dev/null || echo "(既定 = iptables)"
         ;;
     *) echo "usage: $0 {add|remove|status}" >&2; exit 1 ;;
 esac

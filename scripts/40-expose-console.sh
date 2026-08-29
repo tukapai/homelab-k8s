@@ -24,24 +24,25 @@ NODE_PORT="${NODE_PORT:-30443}"
 UNIT=/etc/systemd/system/k8s-console-forward.service
 SELF="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)/$(basename "${BASH_SOURCE[0]}")"
 
-PRE=(-t nat PREROUTING -p tcp --dport "$LAN_PORT" -j DNAT --to-destination "${TARGET_IP}:${NODE_PORT}")
-OUT=(-t nat OUTPUT -p tcp -d 127.0.0.1 --dport "$LAN_PORT" -j DNAT --to-destination "${TARGET_IP}:${NODE_PORT}")
-FWD=(FORWARD -p tcp -d "$TARGET_IP" --dport "$NODE_PORT" -j ACCEPT)
-SNAT=(-t nat POSTROUTING -p tcp -d "$TARGET_IP" --dport "$NODE_PORT" -j MASQUERADE)
+# iptables は「-t <table>」を -I/-C/-D より前に置く必要がある。
+rule_pre() { sudo iptables -t nat "$1" PREROUTING  -p tcp --dport "$LAN_PORT" -j DNAT --to-destination "${TARGET_IP}:${NODE_PORT}"; }
+rule_out() { sudo iptables -t nat "$1" OUTPUT      -p tcp -d 127.0.0.1 --dport "$LAN_PORT" -j DNAT --to-destination "${TARGET_IP}:${NODE_PORT}"; }
+rule_fwd() { sudo iptables         "$1" FORWARD     -p tcp -d "$TARGET_IP" --dport "$NODE_PORT" -j ACCEPT; }
+rule_snat(){ sudo iptables -t nat "$1" POSTROUTING -p tcp -d "$TARGET_IP" --dport "$NODE_PORT" -j MASQUERADE; }
 
 add_rules() {
-    sudo iptables -C "${PRE[@]}"  2>/dev/null || sudo iptables -I "${PRE[@]}"
-    sudo iptables -C "${OUT[@]}"  2>/dev/null || sudo iptables -I "${OUT[@]}"
-    sudo iptables -C "${FWD[@]}"  2>/dev/null || sudo iptables -I "${FWD[@]}"
-    sudo iptables -C "${SNAT[@]}" 2>/dev/null || sudo iptables -I "${SNAT[@]}"
+    rule_pre  -C 2>/dev/null || rule_pre  -I
+    rule_out  -C 2>/dev/null || rule_out  -I
+    rule_fwd  -C 2>/dev/null || rule_fwd  -I
+    rule_snat -C 2>/dev/null || rule_snat -I
     echo "==> 追加: <KVMホスト>:${LAN_PORT} -> ${TARGET_IP}:${NODE_PORT}"
 }
 
 del_rules() {
-    sudo iptables -D "${PRE[@]}"  2>/dev/null || true
-    sudo iptables -D "${OUT[@]}"  2>/dev/null || true
-    sudo iptables -D "${FWD[@]}"  2>/dev/null || true
-    sudo iptables -D "${SNAT[@]}" 2>/dev/null || true
+    rule_pre  -D 2>/dev/null || true
+    rule_out  -D 2>/dev/null || true
+    rule_fwd  -D 2>/dev/null || true
+    rule_snat -D 2>/dev/null || true
     echo "==> 削除しました"
 }
 
