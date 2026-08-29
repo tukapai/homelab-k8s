@@ -17,7 +17,8 @@ k8s-cp-1 ansible_host=192.168.122.11
 
 [workers]
 # k8s-worker-1 ansible_host=192.168.122.21
-# k8s-worker-2 ansible_host=192.168.122.22
+# 2 台目の KVM ホスト上の VM（ADR-0009: LAN 直結・別 subnet）
+# k8s-worker-2 ansible_host=192.168.1.22
 
 [k8s:children]
 control_plane

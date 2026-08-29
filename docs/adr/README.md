@@ -22,6 +22,7 @@
 | [0006](0006-secrets-management.md) | Secret 管理方式 | Proposed |
 | [0007](0007-repository-topology.md) | リポジトリ構成（infra / gitops / アプリ を分割）| Accepted |
 | [0008](0008-observability.md) | 監視: New Relic 常用 + Instana 評価、計装は OpenTelemetry | Accepted |
+| [0009](0009-cross-host-networking.md) | 複数 KVM ホストにまたがるクラスタのネットワーク（部分 NAT 無効化 + 静的経路）| Accepted |
 
 ## フォーマット
 

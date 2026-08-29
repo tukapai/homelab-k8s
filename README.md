@@ -61,8 +61,9 @@ homelab-k8s/
 ├── scripts/
 │   ├── lib.sh                   共通関数（config 読込 / ログ / MAC 生成 / ノード解決）
 │   ├── 01-install-kvm-host.sh   KVM ホスト初期化
-│   ├── 02-create-node-vm.sh     VM を 1 台作成（cloud-init）
+│   ├── 02-create-node-vm.sh     VM を 1 台作成（NAT / bridge 両対応）
 │   ├── 03-destroy-node-vm.sh    VM を削除
+│   ├── 04-interconnect.sh       複数 KVM ホスト時のサブネット間接続（ADR-0009）
 │   └── 40-expose-console.sh     ホストの LAN ポート → Dashboard NodePort へ転送
 ├── cloud-init/
 │   └── user-data.sample.yaml    02 が生成する user-data の参考
@@ -190,6 +191,7 @@ kubectl get pods -A
 - **入力（環境変数）**:
   - `ROLE` = `control-plane`(既定) / `worker`
   - `ROLE=worker` のとき `NODE_NUM`（1,2,3…）が必須
+  - `NET_MODE` = `nat`(既定) / `bridge`（2 台目以降の KVM ホスト・ADR-0009）
   - 任意で `VM_NAME` `VM_IP` `VCPUS` `RAM_MB` `DISK_GB` `LIBVIRT_NET` などを直接上書き
 - **要 sudo**: あり（イメージ配置・`qemu-img`・`virt-install`）
 - **処理**:
@@ -199,14 +201,18 @@ kubectl get pods -A
   4. ベースイメージ `POOL_DIR/<image>.img` が無ければ `IMG_URL` から DL
   5. ベースを `cp --reflink=auto` でコピー → `qemu-img resize` で `DISK_GB` に拡張
      （backing file 方式ではなく**独立したディスク**にしている）
-  6. `virsh net-update ... add ip-dhcp-host` で `MAC → IP` の DHCP 予約を追加
-     （既存の同 MAC 予約は事前に delete。`--live --config` で稼働中と永続の両方）
+  6. ネットワーク:
+     - `NET_MODE=nat`: `virsh net-update ... add ip-dhcp-host` で `MAC → IP` の
+       DHCP 予約（既存の同 MAC 予約は事前 delete、`--live --config`）
+     - `NET_MODE=bridge`: cloud-init `network-config`（v2）を生成。静的 IP
+       `VM_IP/24` + `VM_GATEWAY` + `VM_NAMESERVERS` + `VM_ROUTES`（他 subnet 経路）
   7. cloud-init `user-data` を生成（一時ファイル、終了時に削除）:
      - `hostname` / `fqdn`（`GUEST_DOMAIN`）
      - `GUEST_USER` を sudo NOPASSWD で作成し公開鍵を登録、パスワードログイン無効
      - `runcmd` で `swapoff -a` と `/etc/fstab` の swap 行コメントアウト
   8. `virt-install --import --cloud-init --graphics none --noautoconsole`
-     （`--cpu host-passthrough`、ディスク／NIC とも virtio）
+     （`--cpu host-passthrough`、ディスク／NIC とも virtio。bridge モードは
+     `--network bridge=<name>` + `--cloud-init ...,network-config=<file>`）
   9. `GUEST_USER@VM_IP` に SSH できるまで最大 5 分ポーリング
   10. inventory に追記すべき行を表示（`<name> ansible_host=<ip>`）
 - **冪等性**: なし（新規作成用）。作り直しは 03 で削除してから再実行
@@ -219,6 +225,17 @@ kubectl get pods -A
   `net-update ... delete ip-dhcp-host`（`mac_for` で MAC を再計算）
 - **冪等性**: あり（存在しなくてもエラーにしない）
 - **注意**: `inventory.ini` の該当行は手動で削除する
+
+### `scripts/04-interconnect.sh {add|remove|status}`（1 台目の KVM ホスト・ADR-0009）
+
+- **要 sudo**: あり（iptables / systemd）
+- **処理（add）**: `config.env` の `LIBVIRT_SUBNET_CIDR` ↔ `LAN_CIDR` の間だけ
+  NAT を無効化（`nat POSTROUTING ... -j RETURN` を libvirt の MASQUERADE より前に）
+  + 双方向 `FORWARD ACCEPT` + `k8s-interconnect.service`（再起動 / libvirt
+  リロード後も復元）。VM→インターネットの NAT は維持。**ダウンタイムなし。**
+- **用途**: 2 台目以降の KVM ホスト上の VM を worker にするとき、Flannel の
+  ノード間 VXLAN を実 IP のまま通す。
+- **冪等性**: あり（`iptables -C` で確認してから挿入）
 
 ### `scripts/40-expose-console.sh {add|remove|status}`
 
@@ -354,21 +371,23 @@ ROLE=worker NODE_NUM=2 VCPUS=4 RAM_MB=8192 DISK_GB=80 ./scripts/02-create-node-v
 複数ノードで control-plane の taint を戻したい場合は
 `group_vars/all.yml` の `single_node_cluster: false` にして `site.yml` を再実行。
 
-## 別の物理マシンを node にする
+## 別の物理マシンを node にする（ADR-0009）
 
-1. その物理マシンにも Ubuntu を入れ、`scripts/01` 相当（KVM）をセットアップ
-   （または物理マシン自体を bare-metal node にするなら KVM 不要）
-2. **ブリッジ接続が必要**: libvirt NAT `default` は他ホストから到達できないので、
-   各 KVM ホストで `br0`（LAN 直結）を作り、`config.env` を
-   ```
-   LIBVIRT_NET=br0
-   NET_PREFIX=<LAN の /24>
-   CP_IP=<LAN 内の空きアドレス>
-   ```
-   に変更してから `scripts/02` を実行
-3. `inventory.ini` に各ノードの LAN IP を記載して `site.yml`
-4. ノード間で以下が通ること: TCP 6443（API）、UDP 8472（Flannel VXLAN）、
-   TCP 10250（kubelet）、TCP 2379-2380（etcd, HA 時）
+既存クラスタ（1 台目の libvirt NAT `192.168.122.0/24`）を止めずに、2 台目の
+KVM ホスト上の VM を worker にする。**完全な手順は
+[docs/runbooks/add-physical-node.md](docs/runbooks/add-physical-node.md)。**
+
+要点:
+
+1. 1 台目で `./scripts/04-interconnect.sh add`
+   （libvirt subnet ↔ LAN の NAT だけ無効化。ダウンタイムなし）
+2. 2 台目に `scripts/01`（KVM）+ `br0` ブリッジ（netplan）
+3. 2 台目の `config.env`: `NET_MODE=bridge` / `LIBVIRT_NET=br0` /
+   `NET_PREFIX=<LAN の /24>` / `VM_GATEWAY` / `VM_ROUTES`（1 台目 subnet 経由）
+4. `ROLE=worker NODE_NUM=2 ./scripts/02-create-node-vm.sh`（静的 IP + 経路を cloud-init）
+5. `inventory.ini` に `k8s-worker-2 ansible_host=<LAN IP>` → `site.yml`
+6. ノード間で通ること: TCP 6443 / UDP 8472（Flannel）/ TCP 10250 / 2379-2380(HA 時)
+7. （任意）ルーターに `192.168.122.0/24 via <1台目の LAN IP>`
 
 ---
 

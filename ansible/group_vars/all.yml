@@ -12,10 +12,9 @@ apiserver_advertise_address: "{{ hostvars[groups['control_plane'][0]]['ansible_h
 # true  … single node。control-plane の taint を外して Pod も載せる
 # false … worker を分ける通常構成。control-plane に taint を付け直す
 #
-# ADR-0003（暫定）: 物理 worker ノードが来るまでは true にして、
-# プラットフォーム(Argo CD 等)を cp+worker に分散させる。
-# ステートフルは nodeSelector で worker 固定。物理ノード join 時に false へ戻す。
-single_node_cluster: true
+# ADR-0003: 物理 worker ノード（k8s-worker-2 @ 192.168.1.x）を追加したので
+# false に戻す。プラットフォーム / アプリは worker 群へ、cp はシステム専用。
+single_node_cluster: false
 
 # containerd
 containerd_config: /etc/containerd/config.toml

@@ -151,7 +151,25 @@ Service <app>   →   Web API Pod (:8080)
 - クラスタ内は HTTP（TLS はエッジで終端済み、ADR-0005）
 - 自宅ルーターのポート開放は**一切不要**
 
-### 5.2 クラスタ内（東西）
+### 5.2 ノード配置とサブネット間接続（ADR-0009）
+
+```
+LAN 192.168.1.0/24
+ ├─ KVM ホストA 192.168.1.35 ── libvirt NAT 192.168.122.0/24
+ │                                 ├─ k8s-cp-1     .11
+ │                                 └─ k8s-worker-1 .21
+ └─ KVM ホストB 192.168.1.188 ── br0（LAN 直結）
+                                   └─ k8s-worker-2  192.168.1.22
+```
+
+- ホスト A で **libvirt subnet ↔ LAN の NAT だけ無効化**
+  （`scripts/04-interconnect.sh`: iptables no-SNAT + FORWARD ACCEPT + systemd）。
+  VM→インターネットの NAT は維持。ダウンタイムなし。
+- worker-2 VM に `192.168.122.0/24 via 192.168.1.35` の静的経路（cloud-init）。
+- → **Flannel VXLAN（UDP 8472）がサブネット跨ぎで実 IP のまま流れる**。
+- （任意）ルーターに `192.168.122.0/24 via 192.168.1.35` → LAN 全体から到達可能。
+
+### 5.3 クラスタ内（東西）
 
 | 経路 | アドレス |
 |---|---|
@@ -159,12 +177,13 @@ Service <app>   →   Web API Pod (:8080)
 | API / Worker → Redis | `<release>-redis.<ns>.svc:6379`（headless）|
 | Pod ネットワーク | Flannel VXLAN `10.244.0.0/16` |
 | Service ネットワーク | `10.96.0.0/12` |
+| ノード間 VXLAN | ノード InternalIP:8472（跨ぎは §5.2 の相互接続経由）|
 
-### 5.3 運用者アクセス（LAN）
+### 5.4 運用者アクセス（LAN）
 
-クラスタ API（`192.168.122.11:6443`）は NAT 内。Mac からは
-**SSH トンネル + kubeconfig**（`mac/` 一式）または Argo CD / Dashboard を
-port-forward で。詳細は [mac/README.md](../mac/README.md)。
+クラスタ API（`192.168.122.11:6443`）は libvirt subnet 内。Mac からは
+**SSH トンネル + kubeconfig**（`mac/` 一式）。ルーター静的ルート（§5.2）を
+入れればトンネル不要になる。詳細は [mac/README.md](../mac/README.md)。
 
 ---
 
@@ -227,19 +246,19 @@ app-<name> に push
 
 ## 8. 可用性・キャパシティ・DR
 
-### 8.1 現在のキャパシティと暫定策（ADR-0003）
+### 8.1 キャパシティ（ADR-0003 → ADR-0009 で解消中）
 
-- 物理 1 台。worker VM は 2 vCPU / 4GB で、プラットフォーム + アプリには不足。
-- **暫定**: `single_node_cluster: true` で cp(8GB) の taint を外し、
-  cp + worker の計 ~12GB に分散。ステートフルは `nodeSelector` で worker 固定。
-  全 Pod に requests/limits を設定して cp の apiserver/etcd を保護。
-- **本命**: 2 台目の物理マシンを `k8s-worker-2` として追加 →
-  cp を再 taint → プラットフォームを worker 群へ。
-  手順: [add-physical-node.md](runbooks/add-physical-node.md)
+- 物理 2 台構成へ移行中。`k8s-worker-2` = ホスト B 上の VM（フルスペック）。
+- `single_node_cluster: false` に戻し、cp を再 taint。プラットフォーム / アプリは
+  worker 群（worker-1 = 2vCPU/4GB、worker-2 = フルスペック）へ。
+- ステートフル（CNPG / Redis）の `nodeSelector` を worker-1 固定から見直し。
+- 全 Pod の requests/limits は引き続き必須（スケジューリングの健全性）。
+- 手順: [add-physical-node.md](runbooks/add-physical-node.md)
 
 ### 8.2 可用性の考え方
 
-物理 1 台では単一障害点を消せない。よって:
+物理 2 台になったが **etcd / control-plane は cp 単独**なので、まだ真の HA では
+ない（次の課題: control-plane 冗長化 or etcd 外出し）。当面:
 
 | 指標 | 目標 | 手段 |
 |---|---|---|
