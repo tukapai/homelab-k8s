@@ -424,10 +424,10 @@ KVM ホスト（A / B）には NR Infra agent と Instana host agent の両方�
 - ✅ 初アプリ（nekoneko-frontend + nekoneko-hoken-api）を公開まで
 - ✅ 2 台目物理ノード（ホスト B / macvtap）→ 3 ノード化
 - ✅ 監視（New Relic 常用 + Instana 評価）両方稼働
+- ✅ `GITOPS_TOKEN` 設定（CI の bump-gitops が image タグを sha に自動更新、動作確認済み）
 
 ### 未決 / TODO
 
-- CI の `GITOPS_TOKEN`（image タグを sha 更新する PAT）— 未設定なら bump-gitops はスキップ
 - Keycloak admin パスワードの SealedSecret 化
 - R2 バケット `nekoneko-attachments` + PG バックアップ有効化 → リストア訓練
 - NetworkPolicy の方針（namespace 間 既定 deny）
