@@ -7,12 +7,12 @@
 #
 # localhost（= Ansible 実行ホスト = KVM ホスト）に導入する。sudo 必要。
 #
-#   cd ansible && ansible-playbook playbooks/60-host-agents.yml -e newrelic_license_key=XXX
+#   cd ansible && ansible-playbook playbooks/60-host-agents.yml -e newrelic_license_key=XXX -K
 #
-# キーは -e か Ansible Vault で渡す。平文コミット禁止。
+# 対象は inventory の [kvm_hosts]（host-a=local / host-b 以降=SSH）。
+# キーは -e か Ansible Vault で渡す。平文コミット禁止。sudo は -K で。
 - name: Host monitoring agents (New Relic)
-  hosts: localhost
-  connection: local
+  hosts: kvm_hosts
   become: true
   vars:
     newrelic_license_key: ""          # 必須

@@ -28,3 +28,14 @@ workers
 ansible_user=ubuntu
 ansible_ssh_private_key_file=~/.ssh/id_ed25519
 ansible_python_interpreter=/usr/bin/python3
+
+# KVM ハイパーバイザ（物理ホスト）自体の監視エージェント用（playbook 60 / 60b）。
+# host-a は Ansible 実行ホスト自身なので connection=local。
+# 2 台目以降は SSH 到達できる IP と sudo 可能なユーザーを書く。
+[kvm_hosts]
+kvm-host-a ansible_connection=local
+# kvm-host-b ansible_host=192.168.1.188
+
+[kvm_hosts:vars]
+ansible_user=tukapai
+ansible_python_interpreter=/usr/bin/python3
