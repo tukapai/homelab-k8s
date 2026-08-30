@@ -23,31 +23,49 @@
         that: newrelic_license_key | length > 0
         fail_msg: "newrelic_license_key を -e か Vault で指定してください"
 
-    - name: NR | keyring dir
-      ansible.builtin.file:
-        path: /etc/apt/keyrings
-        state: directory
-        mode: "0755"
+    - name: NR | already installed?
+      ansible.builtin.command: dpkg-query -W -f='${Status}' newrelic-infra
+      register: nr_pkg
+      changed_when: false
+      failed_when: false
 
-    - name: NR | apt key
-      ansible.builtin.get_url:
-        url: https://download.newrelic.com/infrastructure_agent/gpg/newrelic-infra.gpg
-        dest: /etc/apt/keyrings/newrelic-infra.gpg
-        mode: "0644"
+    # ---- 未導入のときだけ repo を足して入れる（既存環境の apt を壊さない）----
+    - name: NR | setup repo & install
+      when: "'install ok installed' not in nr_pkg.stdout"
+      block:
+        - name: NR | keyring dir
+          ansible.builtin.file:
+            path: /etc/apt/keyrings
+            state: directory
+            mode: "0755"
 
-    - name: NR | apt repo
-      ansible.builtin.apt_repository:
-        repo: >-
-          deb [signed-by=/etc/apt/keyrings/newrelic-infra.gpg]
-          https://download.newrelic.com/infrastructure_agent/linux/apt {{ ansible_distribution_release }} main
-        filename: newrelic-infra
-        state: present
+        - name: NR | apt key
+          ansible.builtin.get_url:
+            url: https://download.newrelic.com/infrastructure_agent/gpg/newrelic-infra.gpg
+            dest: /etc/apt/keyrings/newrelic-infra.gpg
+            mode: "0644"
 
-    - name: NR | install newrelic-infra
-      ansible.builtin.apt:
-        name: newrelic-infra
-        update_cache: true
-        state: present
+        - name: NR | apt repo
+          ansible.builtin.apt_repository:
+            repo: >-
+              deb [signed-by=/etc/apt/keyrings/newrelic-infra.gpg]
+              https://download.newrelic.com/infrastructure_agent/linux/apt {{ ansible_distribution_release }} main
+            filename: newrelic-infra
+            state: present
+            update_cache: false
+
+        - name: NR | update only the newrelic repo（他 repo のエラーで失敗しないように）
+          ansible.builtin.command: >-
+            apt-get update
+            -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/newrelic-infra.list
+            -o Dir::Etc::sourceparts=/dev/null
+            -o APT::Get::List-Cleanup=0
+          changed_when: false
+
+        - name: NR | install newrelic-infra
+          ansible.builtin.apt:
+            name: newrelic-infra
+            state: present
 
     - name: NR | config
       ansible.builtin.copy:
