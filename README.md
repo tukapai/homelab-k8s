@@ -3,12 +3,19 @@
 この Ubuntu 24.04 マシンを **KVM ホスト**にして libvirt VM を立て、
 **kubeadm + Ansible** で Kubernetes クラスタを構築する IaC 一式。
 
-- 最初は **single node**（control-plane 1台、taint を外して Pod も載せる）
-- あとから **worker VM を追加**してスケールアウトできる（同じスクリプト／Playbook を再利用）
-- 別の物理マシンを node にする拡張にも対応（ブリッジ接続 + `config.env` の変更のみ）
+- **single node**（control-plane 1台、`single_node_cluster: true` で taint を外す）でも、
+  **worker VM を追加**したマルチノードでも、同じスクリプト／Playbook で構築できる
+- 別の物理マシンを node にする拡張にも対応（macvtap or bridge + `config.env` の変更）
+- クラスタ構築後は **Argo CD** がプラットフォーム / アプリを
+  [homelab-gitops](https://github.com/tukapai/homelab-gitops) から同期する（ADR-0001 / 0007）
+
+**現在の構成**: 物理 2 台にまたがる 3 ノードクラスタ（cp-1 + worker-1/A + worker-2/B）。
+GitOps でプラットフォーム（Kong / Keycloak / CNPG / cloudflared / 監視）とアプリ
+（`nekonekoinsurance.com` で公開中）が稼働。詳細は下記 design.md。
 
 > 設計ドキュメント（全体像）: [docs/design.md](docs/design.md)
 > 設計判断の記録（ADR）: [docs/adr/](docs/adr/) ／ 運用手順: [docs/runbooks/](docs/runbooks/)
+> GitOps の構造・運用: `homelab-gitops/docs/design.md`
 > 関連記事: （Qiita URL をここに）／ ドラフト: [docs/qiita-article.md](docs/qiita-article.md)
 
 ## clone 後の準備
@@ -54,14 +61,14 @@ homelab-k8s/
 ├── config.env.example          ★ 環境依存の設定（cp して config.env に）
 ├── LICENSE                     MIT
 ├── docs/
-│   ├── design.md               設計ドキュメント（全体像）
-│   ├── adr/                    設計判断の記録(ADR 0001-0007)
+│   ├── design.md               設計ドキュメント（全体像・稼働状態）
+│   ├── adr/                    設計判断の記録(ADR 0001-0010)
 │   ├── runbooks/               物理ノード追加 / PG リストア / 全損復旧
 │   └── qiita-article.md        解説記事ドラフト
 ├── scripts/
 │   ├── lib.sh                   共通関数（config 読込 / ログ / MAC 生成 / ノード解決）
 │   ├── 01-install-kvm-host.sh   KVM ホスト初期化
-│   ├── 02-create-node-vm.sh     VM を 1 台作成（NAT / bridge 両対応）
+│   ├── 02-create-node-vm.sh     VM を 1 台作成（NAT / bridge / macvtap 対応）
 │   ├── 03-destroy-node-vm.sh    VM を削除
 │   ├── 04-interconnect.sh       複数 KVM ホスト時のサブネット間接続（ADR-0009）
 │   └── 40-expose-console.sh     ホストの LAN ポート → Dashboard NodePort へ転送
@@ -80,7 +87,8 @@ homelab-k8s/
 │       ├── 40-web-console.yml   Kubernetes Dashboard（任意・site.yml 非含）
 │       ├── 42-metrics-server.yml metrics-server（任意・kubectl top / GUI グラフ用）
 │       ├── 50-argocd.yml        Argo CD ブートストラップ（ADR-0001, 以降は GitOps）
-│       └── 60-host-agents.yml   KVM ホストの New Relic Infra agent（ADR-0008）
+│       └── 60-host-agents.yml   KVM ホスト（[kvm_hosts]）の New Relic Infra agent（ADR-0008）
+│       （playbooks/local/60b-instana-host-agent.yml は Instana 評価用・gitignore）
 ├── mac/                         Mac から見るための手順とファイル（mac/README.md）
 └── logs/                        スクリプト／Ansible の実行ログ（gitignore）
 ```
@@ -191,7 +199,8 @@ kubectl get pods -A
 - **入力（環境変数）**:
   - `ROLE` = `control-plane`(既定) / `worker`
   - `ROLE=worker` のとき `NODE_NUM`（1,2,3…）が必須
-  - `NET_MODE` = `nat`(既定) / `bridge`（2 台目以降の KVM ホスト・ADR-0009）
+  - `NET_MODE` = `nat`(既定) / `bridge` / `macvtap`
+    （2 台目以降の KVM ホスト・ADR-0009。ホスト B は macvtap を採用）
   - 任意で `VM_NAME` `VM_IP` `VCPUS` `RAM_MB` `DISK_GB` `LIBVIRT_NET` などを直接上書き
 - **要 sudo**: あり（イメージ配置・`qemu-img`・`virt-install`）
 - **処理**:
@@ -204,8 +213,10 @@ kubectl get pods -A
   6. ネットワーク:
      - `NET_MODE=nat`: `virsh net-update ... add ip-dhcp-host` で `MAC → IP` の
        DHCP 予約（既存の同 MAC 予約は事前 delete、`--live --config`）
-     - `NET_MODE=bridge`: cloud-init `network-config`（v2）を生成。静的 IP
-       `VM_IP/24` + `VM_GATEWAY` + `VM_NAMESERVERS` + `VM_ROUTES`（他 subnet 経路）
+     - `NET_MODE=bridge` / `macvtap`: cloud-init `network-config`（v2）を生成。静的 IP
+       `VM_IP/24` + `VM_GATEWAY` + `VM_NAMESERVERS` + `VM_ROUTES`（他 subnet 経路）。
+       macvtap は `--network type=direct,source=<if>,source_mode=bridge`。ホスト↔自 VM は
+       直接通信できない制約があるが host bridge 不要で SSH 断リスクがない
   7. cloud-init `user-data` を生成（一時ファイル、終了時に削除）:
      - `hostname` / `fqdn`（`GUEST_DOMAIN`）
      - `GUEST_USER` を sudo NOPASSWD で作成し公開鍵を登録、パスワードログイン無効
@@ -277,7 +288,9 @@ kubectl get pods -A
 3. `GUEST_USER` 用に `~/.kube/config` を配置
 4. `/healthz` が通るまで待機
 5. Flannel DaemonSet が無ければ `flannel_manifest_url` を `kubectl apply`
-6. `single_node_cluster` が true なら `kubectl taint nodes --all node-role.kubernetes.io/control-plane-`
+6. `kubectl taint nodes -l node-role.kubernetes.io/control-plane ...`
+   （`single_node_cluster: true` なら taint 除去 / `false` なら付与。
+   `-l` セレクタで cp のみ対象。以前 `--all` で worker にも付く不具合があった）
 7. `kubeadm token create --print-join-command` の結果を
    `~/kubeadm-join.sh` に保存
 8. `/etc/kubernetes/admin.conf` を Ansible 実行側の `ansible/kubeconfig` に `fetch`
@@ -315,10 +328,11 @@ cd ansible
 ansible-playbook playbooks/50-argocd.yml -e gitops_repo_url=git@github.com:you/homelab-gitops.git
 ```
 
-- `argocd` namespace に Argo CD（バージョンは `group_vars/all.yml` の `argocd_version`）
-- `gitops_repo_url` があれば app-of-apps の `root` Application を作成
+- `argocd` namespace に Argo CD（バージョンは `group_vars/all.yml` の `argocd_version`。現 v2.13.3）
+- `gitops_repo_url`（現 `github.com/tukapai/homelab-gitops`）を指す `root` Application を作成
 - 初期 admin パスワードを表示
-- private リポは別途 repo 資格情報の登録が必要（実行後の案内 / runbook 参照）
+- private リポは repo-creds テンプレート Secret を 1 つ登録（`https://github.com/tukapai/` 配下に効く。実行後の案内 / runbook 参照）
+- 以降のコンポーネント追加・変更はこのリポジトリではなく **homelab-gitops** で行う
 
 ## 運用 Runbook
 
@@ -377,17 +391,23 @@ ROLE=worker NODE_NUM=2 VCPUS=4 RAM_MB=8192 DISK_GB=80 ./scripts/02-create-node-v
 KVM ホスト上の VM を worker にする。**完全な手順は
 [docs/runbooks/add-physical-node.md](docs/runbooks/add-physical-node.md)。**
 
-要点:
+要点（ホスト B は macvtap を採用。理由は下記）:
 
 1. 1 台目で `./scripts/04-interconnect.sh add`
    （libvirt subnet ↔ LAN の NAT だけ無効化。ダウンタイムなし）
-2. 2 台目に `scripts/01`（KVM）+ `br0` ブリッジ（netplan）
-3. 2 台目の `config.env`: `NET_MODE=bridge` / `LIBVIRT_NET=br0` /
+2. 2 台目に `scripts/01`（KVM）
+3. 2 台目の `config.env`: `NET_MODE=macvtap` / `MACVTAP_SOURCE=<LAN NIC>` /
    `NET_PREFIX=<LAN の /24>` / `VM_GATEWAY` / `VM_ROUTES`（1 台目 subnet 経由）
+   / `EXTRA_SSH_PUBKEYS`（1 台目の公開鍵。Ansible がホスト A から SSH するため）
 4. `ROLE=worker NODE_NUM=2 ./scripts/02-create-node-vm.sh`（静的 IP + 経路を cloud-init）
 5. `inventory.ini` に `k8s-worker-2 ansible_host=<LAN IP>` → `site.yml`
 6. ノード間で通ること: TCP 6443 / UDP 8472（Flannel）/ TCP 10250 / 2379-2380(HA 時)
 7. （任意）ルーターに `192.168.122.0/24 via <1台目の LAN IP>`
+
+> **なぜ bridge ではなく macvtap か**: ホスト B は NetworkManager renderer で、
+> `netplan try` がブリッジの revert に非対応 → 設定ミスで SSH 断のリスクがあった。
+> macvtap は host bridge を作らないので安全。制約（ホスト↔自 VM 不通）は
+> Ansible をホスト A から実行することで回避している。
 
 ---
 
@@ -420,18 +440,25 @@ ssh -N -L 8443:<CP_IP>:30443 "$KVM_HOST"
 
 ## 動作確認済み構成
 
-以下の構成でクラスタ構築〜worker 追加〜Mac から Headlamp 接続まで確認済み。
+クラスタ構築〜worker 追加〜別物理ホスト追加〜Argo CD ブートストラップ〜
+アプリのインターネット公開まで確認済み。
 
 | 項目 | 値 |
 |---|---|
-| KVM ホスト A | Ubuntu 24.04（AMD-V, 12 vCPU / 60GB RAM）/ libvirt NAT 192.168.122.0/24 |
-| KVM ホスト B | Ubuntu 24.04（同等）/ macvtap 直付け（ADR-0009）|
+| KVM ホスト A | Ubuntu 24.04（AMD-V, 12 vCPU / 60GB RAM, 192.168.1.35）/ libvirt NAT 192.168.122.0/24 |
+| KVM ホスト B | Ubuntu 24.04（10 vCPU / 50GB, 192.168.1.188）/ macvtap 直付け（ADR-0009）|
 | control-plane VM | `k8s-cp-1` / 192.168.122.11 / 4 vCPU / 8GB / 60GB（taint 付き）|
 | worker VM 1 | `k8s-worker-1` / 192.168.122.21 / 2 vCPU / 4GB / 40GB（ホスト A）|
 | worker VM 2 | `k8s-worker-2` / 192.168.1.22 / 10 vCPU / 50GB / 400GB（ホスト B）|
-| Kubernetes | v1.31（`pkgs.k8s.io`）|
-| ランタイム / CNI | containerd + SystemdCgroup / Flannel（跨ぎ VXLAN 確認済み）|
-| アドオン | metrics-server（任意）、Kubernetes Dashboard（任意）|
+| Kubernetes | v1.31.14（`pkgs.k8s.io`）|
+| ランタイム / CNI | containerd 2.x + SystemdCgroup / Flannel（跨ぎ VXLAN 確認済み）|
+| アドオン | metrics-server、Argo CD v2.13.3、Kubernetes Dashboard（任意）|
+| プラットフォーム（GitOps）| Kong / Keycloak 26 / CloudNativePG / cloudflared / New Relic / OTel Collector |
+| アプリ | `www` / `api` / `auth`.nekonekoinsurance.com（Cloudflare Tunnel 公開）|
+| 監視 | New Relic（常用）+ Instana（評価中）。KVM ホスト A/B に host agent |
+
+プラットフォーム / アプリの詳細は `homelab-gitops/docs/design.md`、
+[docs/design.md](docs/design.md) §0 / §11。
 
 ---
 
