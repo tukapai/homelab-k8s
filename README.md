@@ -16,7 +16,7 @@ GitOps でプラットフォーム（Kong / Keycloak / CNPG / cloudflared / 監�
 > 設計ドキュメント（全体像）: [docs/design.md](docs/design.md)
 > 設計判断の記録（ADR）: [docs/adr/](docs/adr/) ／ 運用手順: [docs/runbooks/](docs/runbooks/)
 > GitOps の構造・運用: `homelab-gitops/docs/design.md`
-> 関連記事: （Qiita URL をここに）／ ドラフト: [docs/qiita-article.md](docs/qiita-article.md)
+> 関連記事（Qiita 連載・全3回）: ドラフトは [docs/qiita-article.md](docs/qiita-article.md)（[qiita/](docs/qiita/) 配下）
 
 ## clone 後の準備
 
