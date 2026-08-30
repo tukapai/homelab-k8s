@@ -5,8 +5,24 @@
 設計。個々の意思決定の根拠は [ADR](adr/)、手順は [runbook](runbooks/) を参照。
 
 - 対象読者: 将来の自分、この構成を参考にする人
-- ステータス: 基盤構築済み / プラットフォーム・アプリは実装フェーズ
-- 最終更新: 2026-08-29
+- ステータス: **稼働中**（3 ノードクラスタ / GitOps 全同期 / 初アプリ公開 / 監視稼働）
+- 最終更新: 2026-08-30
+
+### 現在の稼働状態（2026-08-30）
+
+| 項目 | 状態 |
+|---|---|
+| クラスタ | 3 ノード Ready（cp-1 + worker-1 + worker-2）。物理 2 台（ホスト A / B）にまたがる |
+| ノード間ネットワーク | Flannel VXLAN がサブネット跨ぎで疎通（ADR-0009。worker-2 は macvtap）|
+| Argo CD | ブートストラップ済み。root + 子 App 13 個。プラットフォームは全て Synced/Healthy |
+| Ingress | **Kong**（ingress-nginx は無効化。ADR-0010）|
+| 認証基盤 | Keycloak 26.0.7、realm `nekoneko` インポート済み（ルートパス配信）|
+| 公開アプリ | `www` / `api` / `auth`.nekonekoinsurance.com が Cloudflare Tunnel 経由で HTTP 200 |
+| アプリ | nekoneko-frontend（静的サイト）+ nekoneko-hoken-api（Spring Boot 3、Flyway 7 マイグレーション適用済み）|
+| DB | CloudNativePG `Cluster`（keycloak-pg / nekoneko-api-pg）。local-path PV |
+| 監視 | New Relic（常用）+ Instana（評価中）両方稼働。§11 |
+
+未了は §13。
 
 ---
 
@@ -75,21 +91,24 @@
 
 ```
 ┌─ L5 アプリケーション ────────────────────────────────────────────┐
-│  Web API (Deployment/HPA)   Worker (queue consumer)             │
-│  namespace: <app>-prod / <app>-dev                              │
+│  nekoneko-frontend (nginx 静的)   nekoneko-hoken-api (Spring Boot)│
+│  namespace: nekoneko                                            │
 ├─ L4 アプリ付随ミドルウェア ──────────────────────────────────────┤
-│  PostgreSQL (CloudNativePG Cluster)   Redis (StatefulSet)       │
-│  ※ nodeSelector で worker 固定（ADR-0003/0004）                 │
+│  PostgreSQL (CloudNativePG Cluster)   ※Redis は未導入（必要時）   │
+│  keycloak-pg / nekoneko-api-pg ·  nodeSelector: worker-2        │
 ├─ L3 プラットフォーム（Argo CD が homelab-gitops から同期）────────┤
-│  Argo CD   ingress-nginx(ClusterIP)   cloudflared               │
-│  sealed-secrets   CloudNativePG operator   metrics-server       │
+│  Argo CD   Kong Ingress Controller   cloudflared   Keycloak     │
+│  sealed-secrets  CloudNativePG operator  local-path  metrics-srv │
+│  New Relic nri-bundle  OTel Collector  （Instana は評価中・GitOps外）│
 ├─ L2 Kubernetes クラスタ（kubeadm, homelab-k8s/ansible）──────────┤
-│  control-plane: k8s-cp-1     worker: k8s-worker-1 (VM)          │
-│  containerd + SystemdCgroup / CNI Flannel / v1.31              │
+│  control-plane: k8s-cp-1(.122.11)                               │
+│  worker: k8s-worker-1(.122.21, ホストA)  k8s-worker-2(.1.22, ホストB)│
+│  containerd 2.x + SystemdCgroup / CNI Flannel / v1.31.14        │
 ├─ L1 仮想化基盤（homelab-k8s/scripts）───────────────────────────┤
 │  KVM / libvirt  ·  cloud-init で Ubuntu 24.04 VM を払い出し      │
+│  ホストA=libvirt NAT / ホストB=macvtap（ADR-0009）              │
 ├─ L0 物理 ─────────────────────────────────────────────────────┤
-│  Ubuntu 24.04 / AMD-V / ~64GB RAM （当面 1 台）                  │
+│  ホストA: Ubuntu 24.04 (192.168.1.35)  ホストB: (192.168.1.188) │
 └───────────────────────────────────────────────────────────────┘
 ```
 
@@ -115,14 +134,17 @@
 | metrics-server | `kubectl top` / GUI グラフ | `42-metrics-server.yml` | — |
 | Argo CD | GitOps コントローラ | `50-argocd.yml` | ADR-0001 |
 | sealed-secrets | Secret を git に載せる | gitops `platform/` | ADR-0006 |
-| ingress-nginx | L7 ルーティング（ClusterIP）| gitops `platform/` | ADR-0002/0005 |
-| cloudflared | Cloudflare Tunnel 終端 | gitops `platform/` | ADR-0002 |
+| **Kong Ingress Controller** | L7 ルーティング（DB-less、ClusterIP proxy）| gitops `platform/` | ADR-0010（ingress-nginx を置換）|
+| cloudflared | Cloudflare Tunnel 終端（2 レプリカ、token モード）| gitops `platform/` | ADR-0002 |
+| Keycloak | OIDC（keycloakx chart、realm `nekoneko`）| gitops `platform/keycloak` | ADR-0010 |
 | CloudNativePG | PostgreSQL operator | gitops `platform/` | ADR-0004 |
-| PostgreSQL | RDB | アプリ Helm チャート | ADR-0004 |
-| Redis | cache + queue | アプリ Helm チャート | ADR-0004 |
-| local-path-provisioner | StorageClass（単一ノード）| （k3s 由来ではないため要導入 TODO）| ADR-0004 |
+| PostgreSQL | RDB（`Cluster` CRD）| アプリ Helm チャート | ADR-0004 |
+| local-path-provisioner | StorageClass（default、WaitForFirstConsumer）| gitops `platform/`（導入済み）| ADR-0004 |
+| New Relic nri-bundle | k8s / インフラ監視（常用）| gitops `platform/newrelic` | ADR-0008 |
+| OTel Collector | アプリ OTLP → New Relic（評価中は Instana にも）| gitops `platform/otel-collector` | ADR-0008 |
+| Redis | cache + queue | 未導入（バックエンド設計に含むが現状不使用）| ADR-0004 |
 
-> **MetalLB / cert-manager は入れない**（ADR-0005）。
+> **MetalLB / cert-manager は入れない**（ADR-0005）。Instana は評価目的で GitOps 外（§11）。
 
 ---
 
@@ -132,21 +154,24 @@
 
 ```
 ブラウザ
-  │  https://api.example.com
+  │  https://api.nekonekoinsurance.com
   ▼
 Cloudflare エッジ         TLS 終端 / WAF / レート制限 / キャッシュ
   │  (Tunnel: アウトバウンド接続)
   ▼
 cloudflared Pod (2 レプリカ, namespace: cloudflared)
-  │  http://ingress-nginx-controller.ingress-nginx.svc:80
+  │  http://kong-kong-proxy.kong.svc.cluster.local:80
   ▼
-ingress-nginx (ClusterIP)
-  │  Ingress ルール (host: api.example.com)
+Kong Ingress Controller (ClusterIP, DB-less)
+  │  Ingress ルール (ingressClassName: kong, host 振り分け)
+  │    www.nekonekoinsurance.com  → nekoneko-frontend
+  │    api.nekonekoinsurance.com  → nekoneko-hoken-api (:8080)
+  │    auth.nekonekoinsurance.com → keycloak-keycloakx-http
   ▼
-Service <app>   →   Web API Pod (:8080)
+Service <app>   →   Pod
 ```
 
-- 公開ホスト名 → サービスの対応は **Cloudflare ダッシュボード**で設定
+- 公開ホスト名 → Kong proxy の対応は **Cloudflare ダッシュボード**で設定
   （cloudflared は token モード）
 - クラスタ内は HTTP（TLS はエッジで終端済み、ADR-0005）
 - 自宅ルーターのポート開放は**一切不要**
@@ -158,16 +183,22 @@ LAN 192.168.1.0/24
  ├─ KVM ホストA 192.168.1.35 ── libvirt NAT 192.168.122.0/24
  │                                 ├─ k8s-cp-1     .11
  │                                 └─ k8s-worker-1 .21
- └─ KVM ホストB 192.168.1.188 ── br0（LAN 直結）
+ └─ KVM ホストB 192.168.1.188 ── macvtap（bridge mode, LAN 直結）
                                    └─ k8s-worker-2  192.168.1.22
 ```
 
+- ホスト B は当初 br0 を検討したが、NetworkManager renderer + `netplan try` が
+  ブリッジの revert 非対応で SSH 断のリスク → **macvtap（`type=direct, source_mode=bridge`）**に変更。
+  ホスト↔自 VM は直接通信できない制約があるが、Ansible はホスト A から実行するので許容。
 - ホスト A で **libvirt subnet ↔ LAN の NAT だけ無効化**
   （`scripts/04-interconnect.sh`: iptables no-SNAT + FORWARD ACCEPT + systemd）。
   VM→インターネットの NAT は維持。ダウンタイムなし。
 - worker-2 VM に `192.168.122.0/24 via 192.168.1.35` の静的経路（cloud-init）。
-- → **Flannel VXLAN（UDP 8472）がサブネット跨ぎで実 IP のまま流れる**。
+- → **Flannel VXLAN（UDP 8472）がサブネット跨ぎで実 IP のまま流れる**（疎通確認済み）。
 - （任意）ルーターに `192.168.122.0/24 via 192.168.1.35` → LAN 全体から到達可能。
+- **既知の制約**: Pod ネットワーク（10.244.x）から他ホストの node IP（192.168.122.x）への
+  経路は通らない。Instana host agent への OTLP 送信は otel-collector に `NODE_IP`
+  （downward API）を渡して**自ノードの agent へ直送**することで回避（§11）。
 
 ### 5.3 クラスタ内（東西）
 
@@ -236,23 +267,32 @@ app-<name> に push
 ### 7.3 Argo CD の構成
 
 - `app-of-apps`: root Application → `homelab-gitops/bootstrap/children/` を recurse
-- 依存順は **sync-wave**: sealed-secrets(-1) → ingress-nginx / cnpg-operator(0)
-  → cloudflared(1) → アプリ(2)
+- 依存順は **sync-wave**（実際の値）:
+  - `-1`: sealed-secrets、local-path-provisioner
+  - `0`: cnpg-operator、kong、newrelic-license
+  - `1`: keycloak-infra（CNPG Cluster）、newrelic（nri-bundle）
+  - `2`: keycloak、nekoneko-shared（ghcr pull secret）
+  - `3`: nekoneko-frontend、nekoneko-api
+  - cloudflared / otel-collector は独立（`0`）
 - プラットフォームは Helm チャート直参照、アプリはマルチソース
   （chart は `app-<name>`、values は `homelab-gitops`）
 - AppProject は `default`（1 人なので制限なし）
+- private リポは repo-creds テンプレート 1 つ（`https://github.com/tukapai/` 配下に効く）
+- 詳細な構造・運用は `homelab-gitops/docs/design.md`
 
 ---
 
 ## 8. 可用性・キャパシティ・DR
 
-### 8.1 キャパシティ（ADR-0003 → ADR-0009 で解消中）
+### 8.1 キャパシティ（ADR-0003 → ADR-0009 で解消済み）
 
-- 物理 2 台構成へ移行中。`k8s-worker-2` = ホスト B 上の VM（フルスペック）。
-- `single_node_cluster: false` に戻し、cp を再 taint。プラットフォーム / アプリは
-  worker 群（worker-1 = 2vCPU/4GB、worker-2 = フルスペック）へ。
-- ステートフル（CNPG / Redis）の `nodeSelector` を worker-1 固定から見直し。
-- 全 Pod の requests/limits は引き続き必須（スケジューリングの健全性）。
+- 物理 2 台構成。`k8s-worker-2` = ホスト B 上の VM（フルスペック）。
+- `single_node_cluster: false`。cp は再 taint 済み（cp はシステムコンポーネント専用）。
+  - 注: playbook が `taint nodes --all` していたため worker-1 にも taint が付く不具合があり、
+    `-l node-role.kubernetes.io/control-plane` に修正した。
+- ステートフル（CNPG）と重めのアプリは `nodeSelector: kubernetes.io/hostname: k8s-worker-2`。
+- 全 Pod の requests/limits は引き続き必須（非力な worker-1・cp 保護）。
+- 監視 DaemonSet（nri / instana agent）は cp の taint を許容（`tolerations: operator Exists`）。
 - 手順: [add-physical-node.md](runbooks/add-physical-node.md)
 
 ### 8.2 可用性の考え方
@@ -298,7 +338,8 @@ Pod / ノード単位の障害は Kubernetes が自己修復。**ホスト全損
 - **クラスタは 1 つ**。staging クラスタは作らない（1 人には過剰）
 - `dev` / `prod` は **namespace + Kustomize/Helm values の overlay** で分離
 - `homelab-gitops/apps/<name>/values-dev.yaml` / `values-prod.yaml`
-- dev は replica 1・小リソース・別ホスト名（`api-dev.example.com`）
+- 現状は `prod` のみ（`nekoneko` namespace）。dev は必要になったら別ホスト名で
+  （`api-dev.nekonekoinsurance.com`、replica 1・小リソース）
 
 ---
 
@@ -307,7 +348,11 @@ Pod / ノード単位の障害は Kubernetes が自己修復。**ホスト全損
 **New Relic を常用（GitOps 管理）**。**Instana は評価目的で GitOps 外**
 （一時導入・gitignore・撤去前提）。特に検証したいのは Instana の
 「通常エージェント（収集） ↔ バックエンドの AI 機能」の連携。
-アプリの計装は **OpenTelemetry 1 本**（Collector 経由）。
+アプリの計装は **OpenTelemetry / Micrometer**（Collector 経由、OTLP/HTTP :4318）。
+
+**現在: 両方稼働中。** アプリ（nekoneko-hoken-api）の metrics / traces は
+otel-collector から New Relic と Instana の両方へファンアウト（送信確認済み）。
+KVM ホスト（A / B）には NR Infra agent と Instana host agent の両方が稼働。
 
 ```
                     ┌──────────────────────────────────┐
@@ -328,12 +373,27 @@ Pod / ノード単位の障害は Kubernetes が自己修復。**ホスト全損
 | アプリ | OTel → Collector → NR OTLP | 評価中: Collector の ConfigMap を一時差し替え |
 
 - NR license は SealedSecret（cluster-wide scope で `newrelic` / `observability` 両 ns 共用）
-- Instana の agent key は評価用スクリプトが直接 `kubectl create secret` / ファイル配置（git 外）
-- Instana は非力クラスタ + 2 スタック常設不可のため**期限を切る**。
-  導入・AI 機能の検証・撤去は `docs/runbooks/instana-eval.md`（gitignore）
-- 評価期間中は監視だけで **~2 CPU / ~2.5GB** 消費（§8 のリソース余裕に注意）
-- 外形監視: healthchecks.io / UptimeRobot で公開ヘルスエンドポイント（別途）
+- Instana の agent key は評価用スクリプト（`homelab-gitops/platform/eval/instana/install.sh`、
+  helm 直接）が `kubectl create secret` / host agent は `60b-instana-host-agent.yml`（gitignore）
+- Instana に app トレースも流すため、評価中は `platform/otel-collector/eval-instana/` の
+  ConfigMap で otel-collector を一時差し替え（`otlp/instana` exporter 追加）。
+  root(app-of-apps) の selfHeal を一時 OFF にして差し替えを維持する（撤去手順は同ファイル）。
+- otel-collector → Instana host agent は Service 経由だとクロスホスト経路で不通のため
+  `${env:NODE_IP}:4317`（自ノードの agent 直送）。
+- Instana は非力クラスタ + 2 スタック常設不可のため**期限を切る**（トライアル期限あり）。
+- Instana host agent が cp に載らない → `agent.pod.tolerations: [{operator: Exists}]`
+- 外形監視: healthchecks.io / UptimeRobot で公開ヘルスエンドポイント（TODO）
 - 評価後にツールを一本化する判断は別 ADR で
+
+#### nri-bundle / otel-collector で踏んだ点（記録）
+
+| 事象 | 対処 |
+|---|---|
+| nri-bundle が helm template 失敗（V3 で legacy `resources:` 不可）| `kubelet` / `ksm` / `controlPlane` 別に `resources` を指定 |
+| otel-collector `0.116.0` の amd64 イメージが `exec /otelcol-contrib: no such file` | `0.128.0` に固定（0.115–0.116 が壊れている）|
+| `service.telemetry.metrics.address` が 0.123+ で廃止 | `readers:` (prometheus pull) 形式に |
+| アプリが OTLP メトリクスを gRPC ポート :4317 に送り失敗 | Micrometer / Boot tracing は **OTLP/HTTP :4318**。`management.otlp.{metrics,tracing}` に統一 |
+| `platform-newrelic` が logging DS で常時 OutOfSync（`argocd app diff` は clean）| chart の明示 null + API server defaulting の差。機能影響なしとして許容 |
 
 ---
 
@@ -354,26 +414,27 @@ Pod / ノード単位の障害は Kubernetes が自己修復。**ホスト全損
 
 ## 13. 未決事項・ロードマップ
 
-### 未決
+### 完了
 
-- ADR-0006（Secret 管理）: Sealed Secrets で開始か SOPS+age か
-- `local-path-provisioner` の導入（gitops `platform/` に追加）
-- ghcr.io の imagePullSecret 配布方法
-- NetworkPolicy の方針
-- 監視のフェーズ 2 の具体（Grafana Cloud か自ホストか）
+- ✅ 3 リポジトリを GitHub へ push（SSH remote。fine-grained PAT は repo 作成 / workflow push 不可）
+- ✅ Argo CD ブートストラップ、platform 一式 Synced/Healthy
+- ✅ Kong / Keycloak / cloudflared / local-path / CNPG operator
+- ✅ Sealed Secrets（ADR-0006 は Sealed Secrets で開始）
+- ✅ imagePullSecret（`nekoneko-shared` + `ghcr-pull`、private ghcr のまま）
+- ✅ 初アプリ（nekoneko-frontend + nekoneko-hoken-api）を公開まで
+- ✅ 2 台目物理ノード（ホスト B / macvtap）→ 3 ノード化
+- ✅ 監視（New Relic 常用 + Instana 評価）両方稼働
 
-### ロードマップ
+### 未決 / TODO
 
-1. `single_node_cluster: true` 反映（`site.yml` 再実行）
-2. 3 リポジトリを GitHub へ push
-3. `50-argocd.yml` で Argo CD ブートストラップ
-4. `homelab-gitops` の `CHANGEME` 置換、Cloudflare Tunnel トークン封入
-5. platform 一式が Synced/Healthy になることを確認
-6. `local-path-provisioner` を追加
-7. 最初のアプリ（`app-template` 派生）を通す
-8. R2/B2 バケット作成、PostgreSQL バックアップ有効化 → リストア訓練
-9. 監視フェーズ 2
-10. 2 台目物理ノード（時期未定）→ 暫定策解除
+- CI の `GITOPS_TOKEN`（image タグを sha 更新する PAT）— 未設定なら bump-gitops はスキップ
+- Keycloak admin パスワードの SealedSecret 化
+- R2 バケット `nekoneko-attachments` + PG バックアップ有効化 → リストア訓練
+- NetworkPolicy の方針（namespace 間 既定 deny）
+- 外形監視（healthchecks.io / UptimeRobot）
+- control-plane 冗長化 or etcd 外出し（真の HA）
+- Instana 評価の完了 → 撤去 → 一本化の ADR
+- 漏洩した PAT 2 本のローテーション
 
 ---
 
@@ -381,7 +442,8 @@ Pod / ノード単位の障害は Kubernetes が自己修復。**ホスト全損
 
 | 種別 | 場所 |
 |---|---|
-| 意思決定記録 | [docs/adr/](adr/) （0001–0007）|
+| 意思決定記録 | [docs/adr/](adr/) （0001–0010）|
+| GitOps の構造・運用 | `homelab-gitops/docs/design.md` |
 | 運用手順 | [docs/runbooks/](runbooks/) |
 | インフラ手順 | [README.md](../README.md) |
 | Mac からの接続 | [mac/README.md](../mac/README.md) |
