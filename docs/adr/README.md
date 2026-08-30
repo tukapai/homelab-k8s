@@ -24,6 +24,7 @@
 | [0008](0008-observability.md) | 監視: New Relic 常用 + Instana 評価、計装は OpenTelemetry | Accepted |
 | [0009](0009-cross-host-networking.md) | 複数 KVM ホストにまたがるクラスタのネットワーク（部分 NAT 無効化 + 静的経路）| Accepted |
 | [0010](0010-first-app-nekoneko-hoken.md) | 最初のアプリ「ねこねこ保険」— Kong / Keycloak をプラットフォームに追加 | Accepted |
+| [0011](0011-remote-maintenance-access.md) | リモートメンテナンスアクセスは Cloudflare Access（VPN クライアントなし）| Accepted |
 
 ## フォーマット
 

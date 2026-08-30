@@ -442,7 +442,7 @@ KVM ホスト（A / B）には NR Infra agent と Instana host agent の両方�
 
 | 種別 | 場所 |
 |---|---|
-| 意思決定記録 | [docs/adr/](adr/) （0001–0010）|
+| 意思決定記録 | [docs/adr/](adr/) （0001–0011）|
 | GitOps の構造・運用 | `homelab-gitops/docs/design.md` |
 | 運用手順 | [docs/runbooks/](runbooks/) |
 | インフラ手順 | [README.md](../README.md) |

@@ -62,7 +62,7 @@ homelab-k8s/
 ├── LICENSE                     MIT
 ├── docs/
 │   ├── design.md               設計ドキュメント（全体像・稼働状態）
-│   ├── adr/                    設計判断の記録(ADR 0001-0010)
+│   ├── adr/                    設計判断の記録(ADR 0001-0011)
 │   ├── runbooks/               物理ノード追加 / PG リストア / 全損復旧
 │   └── qiita-article.md        解説記事ドラフト
 ├── scripts/
@@ -341,6 +341,7 @@ ansible-playbook playbooks/50-argocd.yml -e gitops_repo_url=git@github.com:you/h
 | [add-physical-node.md](docs/runbooks/add-physical-node.md) | 2 台目の物理マシンを worker として追加、暫定策の解除 |
 | [restore-postgres.md](docs/runbooks/restore-postgres.md) | CloudNativePG のバックアップ／リストア（PITR、DR）|
 | [backup-and-recovery.md](docs/runbooks/backup-and-recovery.md) | 何を退避するか、全損からの復旧手順、sealing key 管理 |
+| [remote-maintenance-access.md](docs/runbooks/remote-maintenance-access.md) | 外出先から VPN クライアント無しで SSH（Cloudflare Access、ADR-0011）|
 
 > `docs/runbooks/instana-eval.md` と `ansible/playbooks/local/` は Instana 評価用の
 > 一時ファイルで **gitignore**（ADR-0008）。

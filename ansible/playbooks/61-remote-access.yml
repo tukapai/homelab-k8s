@@ -1,0 +1,121 @@
+---
+# KVM ホストへのリモートメンテナンスアクセス（ADR-0011）。
+# Web 公開用の cloudflared（クラスタ内 Deployment）とは別に、
+# ホスト OS に常駐する cloudflared を立て、ssh://localhost:22 への
+# 専用 Tunnel を張る。VPN クライアント不要、ポート開放不要。
+#
+# 事前に Cloudflare Zero Trust ダッシュボードで Tunnel を作成し、
+# トークンを発行しておくこと（docs/runbooks/remote-maintenance-access.md）。
+# ホストごとに別の Tunnel（別トークン）を使う。
+#
+#   cd ansible
+#   ansible-playbook playbooks/61-remote-access.yml --limit kvm-host-a -K \
+#     -e cloudflared_ssh_token='<host-a 用の Tunnel トークン>'
+#   ansible-playbook playbooks/61-remote-access.yml --limit kvm-host-b -K \
+#     -e cloudflared_ssh_token='<host-b 用の Tunnel トークン>'
+#
+# 撤去: -e cloudflared_ssh_state=absent
+#
+# トークンは -e で都度渡す。チャットに貼らない・コミットしない。
+- name: Remote maintenance access (Cloudflare Access / cloudflared, ADR-0011)
+  hosts: kvm_hosts
+  become: true
+  vars:
+    cloudflared_ssh_token: ""
+    cloudflared_ssh_state: present   # present | absent
+  tasks:
+    - name: cloudflared-ssh | already installed?
+      ansible.builtin.stat:
+        path: /etc/systemd/system/cloudflared.service
+      register: cf_svc
+
+    # ---------- 撤去 ----------
+    - name: cloudflared-ssh | uninstall
+      when: cloudflared_ssh_state == 'absent'
+      block:
+        - ansible.builtin.command: cloudflared service uninstall
+          when: cf_svc.stat.exists
+          changed_when: true
+        - ansible.builtin.meta: end_host
+
+    # ---------- 導入 ----------
+    - name: cloudflared-ssh | require token
+      ansible.builtin.assert:
+        that: cloudflared_ssh_token | length > 0
+        fail_msg: "cloudflared_ssh_token を -e で指定してください（Cloudflare Zero Trust で発行）"
+      when: not cf_svc.stat.exists
+
+    - name: cloudflared-ssh | already installed → skip install（トークン更新は uninstall してから再実行）
+      ansible.builtin.debug:
+        msg: "cloudflared は導入済みです。トークンを変えたい場合は -e cloudflared_ssh_state=absent で撤去してから再実行してください。"
+      when: cf_svc.stat.exists
+
+    - name: cloudflared-ssh | install binary & register as service
+      when: not cf_svc.stat.exists
+      block:
+        - name: cloudflared-ssh | keyring dir
+          ansible.builtin.file:
+            path: /usr/share/keyrings
+            state: directory
+            mode: "0755"
+
+        - name: cloudflared-ssh | ensure gnupg
+          ansible.builtin.apt:
+            name: gnupg
+            state: present
+            update_cache: false
+
+        - name: cloudflared-ssh | apt key（armored を dearmor して保存）
+          ansible.builtin.shell:
+            cmd: >-
+              set -o pipefail &&
+              curl -fsSL https://pkg.cloudflare.com/cloudflare-main.gpg
+              | gpg --dearmor --yes -o /usr/share/keyrings/cloudflare-main.gpg
+          args:
+            executable: /bin/bash
+          changed_when: false
+
+        - name: cloudflared-ssh | apt repo
+          ansible.builtin.apt_repository:
+            repo: >-
+              deb [signed-by=/usr/share/keyrings/cloudflare-main.gpg]
+              https://pkg.cloudflare.com/cloudflared {{ ansible_distribution_release }} main
+            filename: cloudflared
+            state: present
+            update_cache: false
+
+        - name: cloudflared-ssh | update only the cloudflared repo（他 repo のエラーで失敗しないように）
+          ansible.builtin.command: >-
+            apt-get update
+            -o Dir::Etc::sourcelist=/etc/apt/sources.list.d/cloudflared.list
+            -o Dir::Etc::sourceparts=/dev/null
+            -o APT::Get::List-Cleanup=0
+          changed_when: false
+
+        - name: cloudflared-ssh | install cloudflared
+          ansible.builtin.apt:
+            name: cloudflared
+            state: present
+
+        - name: cloudflared-ssh | register as systemd service（token 込みで常駐化）
+          ansible.builtin.command: "cloudflared service install {{ cloudflared_ssh_token }}"
+          changed_when: true
+          no_log: true   # トークンをログに残さない
+
+    - name: cloudflared-ssh | enable & start
+      ansible.builtin.systemd:
+        name: cloudflared
+        enabled: true
+        state: started
+        daemon_reload: true
+
+    - name: cloudflared-ssh | sshd 生存確認（Tunnel の接続先）
+      ansible.builtin.systemd:
+        name: ssh
+      register: sshd_status
+      failed_when: false
+
+    - name: cloudflared-ssh | sshd 未起動の警告
+      ansible.builtin.debug:
+        msg: "警告: sshd が動いていません。Tunnel は張れても接続先が無い状態です。"
+      when: sshd_status.status is not defined or sshd_status.status.ActiveState != 'active'
