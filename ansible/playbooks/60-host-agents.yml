@@ -39,10 +39,25 @@
             state: directory
             mode: "0755"
 
-        - name: NR | apt key
-          ansible.builtin.get_url:
-            url: https://download.newrelic.com/infrastructure_agent/gpg/newrelic-infra.gpg
-            dest: /etc/apt/keyrings/newrelic-infra.gpg
+        - name: NR | ensure gnupg
+          ansible.builtin.apt:
+            name: gnupg
+            state: present
+            update_cache: false
+
+        - name: NR | apt key（armored を dearmor して保存）
+          ansible.builtin.shell:
+            cmd: >-
+              set -o pipefail &&
+              curl -fsSL https://download.newrelic.com/infrastructure_agent/gpg/newrelic-infra.gpg
+              | gpg --dearmor --yes -o /etc/apt/keyrings/newrelic-infra.gpg
+          args:
+            executable: /bin/bash
+          changed_when: false
+
+        - name: NR | keyring perms
+          ansible.builtin.file:
+            path: /etc/apt/keyrings/newrelic-infra.gpg
             mode: "0644"
 
         - name: NR | apt repo
