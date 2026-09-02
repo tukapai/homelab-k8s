@@ -25,6 +25,8 @@
 | [0009](0009-cross-host-networking.md) | 複数 KVM ホストにまたがるクラスタのネットワーク（部分 NAT 無効化 + 静的経路）| Accepted |
 | [0010](0010-first-app-nekoneko-hoken.md) | 最初のアプリ「ねこねこ保険」— Kong / Keycloak をプラットフォームに追加 | Accepted |
 | [0011](0011-remote-maintenance-access.md) | リモートメンテナンスアクセスは Cloudflare Access（VPN クライアントなし）| Accepted |
+| [0012](0012-angel-bot-second-app.md) | 2 つ目のアプリとして Discord bot「天使ちゃん」を載せる（死活監視つき）| Accepted |
+| [0013](0013-game-servers.md) | ゲームサーバーはクラスタに載せ、公開は Cloudflare Tunnel の TCP で行う | Accepted |
 
 ## フォーマット
 
