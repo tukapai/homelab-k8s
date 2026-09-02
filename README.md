@@ -12,6 +12,8 @@
 **現在の構成**: 物理 2 台にまたがる 3 ノードクラスタ（cp-1 + worker-1/A + worker-2/B）。
 GitOps でプラットフォーム（Kong / Keycloak / CNPG / cloudflared / 監視）とアプリ
 （`nekonekoinsurance.com` で公開中）が稼働。詳細は下記 design.md。
+2 つ目のアプリとして Discord bot「天使ちゃん」と、それが操作する
+ゲームサーバーを追加（ADR-0012 / ADR-0013。有効化はこれから）。
 
 > 設計ドキュメント（全体像）: [docs/design.md](docs/design.md)
 > 設計判断の記録（ADR）: [docs/adr/](docs/adr/) ／ 運用手順: [docs/runbooks/](docs/runbooks/)
@@ -62,8 +64,9 @@ homelab-k8s/
 ├── LICENSE                     MIT
 ├── docs/
 │   ├── design.md               設計ドキュメント（全体像・稼働状態）
-│   ├── adr/                    設計判断の記録(ADR 0001-0011)
-│   ├── runbooks/               物理ノード追加 / PG リストア / 全損復旧
+│   ├── adr/                    設計判断の記録(ADR 0001-0013)
+│   ├── runbooks/               物理ノード追加 / PG リストア / 全損復旧 /
+│   │                           天使ちゃん障害対応 / ゲームサーバー運用
 │   └── qiita-article.md        解説記事ドラフト
 ├── scripts/
 │   ├── lib.sh                   共通関数（config 読込 / ログ / MAC 生成 / ノード解決）
@@ -342,6 +345,8 @@ ansible-playbook playbooks/50-argocd.yml -e gitops_repo_url=git@github.com:you/h
 | [restore-postgres.md](docs/runbooks/restore-postgres.md) | CloudNativePG のバックアップ／リストア（PITR、DR）|
 | [backup-and-recovery.md](docs/runbooks/backup-and-recovery.md) | 何を退避するか、全損からの復旧手順、sealing key 管理 |
 | [remote-maintenance-access.md](docs/runbooks/remote-maintenance-access.md) | 外出先から VPN クライアント無しで SSH（Cloudflare Access、ADR-0011）|
+| [angel-bot-down.md](docs/runbooks/angel-bot-down.md) | 天使ちゃんが落ちたときの切り分けと復旧（ADR-0012）|
+| [game-server-ops.md](docs/runbooks/game-server-ops.md) | ゲームサーバーの起動/停止/バックアップ、参加者の繋ぎ方（ADR-0013）|
 
 > `docs/runbooks/instana-eval.md` と `ansible/playbooks/local/` は Instana 評価用の
 > 一時ファイルで **gitignore**（ADR-0008）。
