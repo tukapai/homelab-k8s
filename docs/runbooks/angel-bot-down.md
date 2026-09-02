@@ -122,7 +122,7 @@ Argo が replicas を戻すことは無い（ADR-0013 の `ignoreDifferences`）
   `error.class` / `error.stack` で原因を追える。
   具体的な NRQL は [newrelic-monitoring.md](newrelic-monitoring.md) §6。
 - 同じことが再発しそうなら、回帰テストを 1 つ足してから直す
-  （`tests/` に 121 件ある。ここに足す）。
+  （`tests/` に 129 件ある。ここに足す）。
 
 ## 付録: 監視が本当に動くかを確かめる
 
