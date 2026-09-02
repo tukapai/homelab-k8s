@@ -121,7 +121,7 @@ Argo が replicas を戻すことは無い（ADR-0013 の `ignoreDifferences`）
   stdout の JSON がそのまま構造化ログとして入っている。
   `error.class` / `error.stack` で原因を追える。
 - 同じことが再発しそうなら、回帰テストを 1 つ足してから直す
-  （`tests/` に 89 件ある。ここに足す）。
+  （`tests/` に 121 件ある。ここに足す）。
 
 ## 付録: 監視が本当に動くかを確かめる
 
