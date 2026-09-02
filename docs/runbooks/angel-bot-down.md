@@ -120,6 +120,7 @@ Argo が replicas を戻すことは無い（ADR-0013 の `ignoreDifferences`）
 - New Relic で該当時刻のログを見る（`service.name = angel-bot`）。
   stdout の JSON がそのまま構造化ログとして入っている。
   `error.class` / `error.stack` で原因を追える。
+  具体的な NRQL は [newrelic-monitoring.md](newrelic-monitoring.md) §6。
 - 同じことが再発しそうなら、回帰テストを 1 つ足してから直す
   （`tests/` に 121 件ある。ここに足す）。
 
