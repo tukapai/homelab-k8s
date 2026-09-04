@@ -347,6 +347,7 @@ ansible-playbook playbooks/50-argocd.yml -e gitops_repo_url=git@github.com:you/h
 | [remote-maintenance-access.md](docs/runbooks/remote-maintenance-access.md) | 外出先から VPN クライアント無しで SSH（Cloudflare Access、ADR-0011）|
 | [angel-bot-down.md](docs/runbooks/angel-bot-down.md) | 天使ちゃんが落ちたときの切り分けと復旧（ADR-0012）|
 | [game-server-ops.md](docs/runbooks/game-server-ops.md) | ゲームサーバーの起動/停止/バックアップ、参加者の繋ぎ方（ADR-0013）|
+| [newrelic-monitoring.md](docs/runbooks/newrelic-monitoring.md) | New Relic での詳細監視（NRQL / アラート / ダッシュボード、ADR-0008 / 0012）|
 
 > `docs/runbooks/instana-eval.md` と `ansible/playbooks/local/` は Instana 評価用の
 > 一時ファイルで **gitignore**（ADR-0008）。
