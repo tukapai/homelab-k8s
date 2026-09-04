@@ -88,6 +88,15 @@ Argo CD が replicas を戻すことは無い（ADR-0013 の `ignoreDifferences`
 
 ### 自動
 
+> **いまは止めてあります（`suspend: true`）。**
+> Minecraft がまだ 1 度も起動していないうちは、ワールドの PVC
+> `data-minecraft-0` も Secret `minecraft-rcon` も存在しないため、
+> この CronJob は毎晩かならず失敗します。常に赤い Job が並ぶと
+> 監視そのものが信用されなくなるので、使い始めるまで止めています。
+> 再開手順は
+> [`apps/gameservers/backup-cronjob.yaml`](https://github.com/tukapai/homelab-gitops/blob/main/apps/gameservers/backup-cronjob.yaml)
+> の先頭コメントにあります（RCON の Secret → 1 度起動 → `suspend: false` → 手動で 1 回実行して確認）。
+
 毎日 04:00 JST（19:00 UTC）に `minecraft-backup` CronJob が走る。
 `itzg/mc-backup` が RCON で `save-off` → `save-all` → tar → `save-on` を行うので、
 **サーバーを止めずに**整合性のあるバックアップが取れる。7 日分保持。
@@ -100,6 +109,8 @@ kubectl -n gameservers get job -l app.kubernetes.io/component=backup
 ### 手動
 
 Discord から `/game backup minecraft`。CronJob をテンプレートに Job を作る。
+`suspend: true` は定期実行を止めるだけなので、**手動のこちらは止まっていない**
+（ただしワールドと RCON の Secret が無ければ当然失敗する）。
 
 ### 中身を見る
 
