@@ -435,6 +435,9 @@ KVM ホスト（A / B）には NR Infra agent と Instana host agent の両方�
 - control-plane 冗長化 or etcd 外出し（真の HA）
 - Instana 評価の完了 → 撤去 → 一本化の ADR
 - 漏洩した PAT 2 本のローテーション
+- ゲームサーバー（Minecraft）の有効化 — 現在メンテナンス中（一度も起動していない）。
+  残作業は [ADR-0013](adr/0013-game-servers.md) の Action Items 7 以降
+  （Secret 封入・Discord 設定・Cloudflare 公開経路・初回起動・バックアップ再開・復元訓練）
 
 ---
 

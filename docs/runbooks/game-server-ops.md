@@ -88,6 +88,15 @@ Argo CD が replicas を戻すことは無い（ADR-0013 の `ignoreDifferences`
 
 ### 自動
 
+> **いまは止めてあります（`suspend: true`）。**
+> Minecraft がまだ 1 度も起動していないうちは、ワールドの PVC
+> `data-minecraft-0` も Secret `minecraft-rcon` も存在しないため、
+> この CronJob は毎晩かならず失敗します。常に赤い Job が並ぶと
+> 監視そのものが信用されなくなるので、使い始めるまで止めています。
+> 再開手順は
+> [`apps/gameservers/backup-cronjob.yaml`](https://github.com/tukapai/homelab-gitops/blob/main/apps/gameservers/backup-cronjob.yaml)
+> の先頭コメントにあります（RCON の Secret → 1 度起動 → `suspend: false` → 手動で 1 回実行して確認）。
+
 毎日 04:00 JST（19:00 UTC）に `minecraft-backup` CronJob が走る。
 `itzg/mc-backup` が RCON で `save-off` → `save-all` → tar → `save-on` を行うので、
 **サーバーを止めずに**整合性のあるバックアップが取れる。7 日分保持。
@@ -100,12 +109,35 @@ kubectl -n gameservers get job -l app.kubernetes.io/component=backup
 ### 手動
 
 Discord から `/game backup minecraft`。CronJob をテンプレートに Job を作る。
+`suspend: true` は定期実行を止めるだけなので、**手動のこちらは止まっていない**
+（ただしワールドと RCON の Secret が無ければ当然失敗する）。
 
 ### 中身を見る
 
+> `kubectl debug --target` は Pod のプロセス名前空間を共有するだけで、
+> ボリュームマウントは引き継がない。minecraft コンテナ自体は
+> `/backups`（`minecraft-backups` PVC）をマウントしていないので、
+> `--target=minecraft` 越しに `/backups` を覗くことはできない。
+> PVC を直接マウントする使い捨て Pod を立てる。local-path は
+> ノードに紐づくので `nodeSelector` を worker-2 に固定すること。
+
 ```bash
-kubectl -n gameservers debug -it minecraft-0 --image=busybox --target=minecraft -- \
-  ls -lh /backups
+kubectl -n gameservers run backup-viewer --rm -it --restart=Never \
+  --image=busybox:1.36 \
+  --overrides='{
+    "spec": {
+      "nodeSelector": {"kubernetes.io/hostname": "k8s-worker-2"},
+      "containers": [{
+        "name": "backup-viewer",
+        "image": "busybox:1.36",
+        "command": ["sh"],
+        "stdin": true,
+        "tty": true,
+        "volumeMounts": [{"name": "backups", "mountPath": "/backups"}]
+      }],
+      "volumes": [{"name": "backups", "persistentVolumeClaim": {"claimName": "minecraft-backups"}}]
+    }
+  }' -- sh -c "ls -lh /backups"
 ```
 
 ### 復元

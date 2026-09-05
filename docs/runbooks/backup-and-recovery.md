@@ -14,9 +14,18 @@ ADR-0003 の可用性戦略「バックアップ + IaC 再構築」の具体。�
 | `app-*` リポジトリ | git（GitHub）| 同上 | push ごと |
 | Redis（queue 用途がある場合）| RDB/AOF を CronJob で R2 へ | R2 | 1 時間ごと等 |
 | PV（上記以外の PVC）| Velero（任意）| R2 | 日次 |
+| Minecraft ワールド（`data-minecraft-0`）| itzg/mc-backup（CronJob）| **worker-2 ノード内 PVC のみ** | 日次（現在 suspend 中） |
 
 **原則: 状態は「Git」か「オブジェクトストレージ」のどちらかにあり、
 物理ホストが消えても復元できること。**
+
+> ⚠️ **Minecraft はこの原則の例外。** ワールド本体（`data-minecraft-0`）も
+> バックアップ（`minecraft-backups`）も同じ worker-2 の local-path PVC にあり、
+> オブジェクトストレージへの退避が無い。**worker-2 が全損すると両方消える。**
+> R2 転送は ADR-0013 の「あとで見直す」に TODO として記録済みで未着手
+> （`homelab-gitops/apps/gameservers/backup-cronjob.yaml` 先頭のコメント参照）。
+> 復旧手順としても本 runbook には Minecraft の記載が無い — 現状「復旧できない」
+> が前提なので、全損復旧の通し訓練でもワールドは対象外になる。
 
 ## Sealed Secrets の sealing key（最重要）
 
@@ -184,3 +193,4 @@ Tunnel が Healthy、公開ホスト名が応答することを確認。
 | PostgreSQL リストア（新クラスタ）| 四半期 |
 | sealing key 復元テスト（訓練クラスタ）| 半期 |
 | 全損復旧の通し訓練 | 年 1 |
+| Minecraft ワールドの復元（`.tgz` → PVC）| 未実施。ADR-0013 Action Item 23。ワールドがまだ空のうちに一度試すこと |
