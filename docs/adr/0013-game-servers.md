@@ -38,8 +38,11 @@ Internet → Cloudflare → Tunnel → cloudflared(Pod) → Kong(ClusterIP) → 
 
 - `k8s-cp-1`: 4 vCPU / 8GB（taint 済み、システム専用）
 - `k8s-worker-1`: 2 vCPU / 4GB（実質の空きは 3.5GB 前後）
-- `k8s-worker-2`: 物理ホスト B 上の VM。**このリポジトリにスペックの記録が無い。**
+- `k8s-worker-2`: 物理ホスト B 上の VM。10 vCPU / 50GB RAM / 400GB
+  （`README.md` の「動作確認済み構成」表、ADR-0009 で追加済み）。
   現在ステートフルとアプリの配置先になっている（ADR-0003 の「フルスペック機」）。
+  ※ 割当スペックは分かっているが、プラットフォーム + 監視 + VoiceVox が
+  常時使っている分を引いた**実際の空き**はまだ測っていない（Action Item 7）。
 
 プラットフォームだけで 1.5–2GB（ADR-0003）、
 監視が New Relic + Instana 並行で ~2–2.5GB（ADR-0008 の評価期間）。
@@ -210,7 +213,8 @@ A の代償は「参加者が cloudflared を入れる」ことだけで、
   手順は runbook（`docs/runbooks/game-server-ops.md`）に用意する。
 - 起動に数分かかる（JVM + ワールド読み込み）。`/game start` してすぐは繋がらない。
 - 稼働中は worker-2 のメモリが逼迫する。
-  **worker-2 の実 RAM がこのリポジトリに記録されていない**ので、
+  割当スペック（10 vCPU / 50GB RAM / 400GB、`README.md`）は分かっているが、
+  **プラットフォーム＋監視＋VoiceVox を引いた実際の空き**は未測定なので、
   有効化の前に実測して ADR-0003 に追記すること。
 - bot に Kubernetes API の権限を与えた。scale に絞ってはいるが、
   bot のトークンが漏れればゲームサーバーを止められる（クラスタ全体ではない）。
@@ -237,9 +241,102 @@ A の代償は「参加者が cloudflared を入れる」ことだけで、
 4. [x] 最小権限の Role/RoleBinding（scale サブリソースのみ）
 5. [x] `apps/gameservers/` に Minecraft StatefulSet（replicas: 0）+ バックアップ CronJob
 6. [x] `app-gameservers` の `ignoreDifferences` で replicas を除外
-7. [ ] **worker-2 の実 RAM を確認し、ADR-0003 に追記する**（有効化の前提）
-8. [ ] `make seal-minecraft-rcon` で RCON パスワードを封入
-9. [ ] Cloudflare Zero Trust で TCP アプリを作成し、Tunnel にルートを追加
-10. [ ] 参加者向けの `cloudflared access tcp` 手順を配布（runbook）
-11. [ ] 実際に起動 → 接続 → 無人 30 分で自動停止、までを一度通す
-12. [ ] バックアップからワールドを復元する手順を一度試す（試していない手順は手順ではない）
+    （2026-09-05 追記: `ignoreDifferences` 単体では sync 時の apply までは止まらないと判明。
+    `syncOptions: RespectIgnoreDifferences=true` を追加して修正済み）
+
+### 残作業（Minecraft を実際に使い始める前に。この順番で）
+
+現在 Minecraft は**メンテナンス中で一度も起動していない**
+（`replicas: 0`、SealedSecret 未作成、ワールド PVC 未作成）。
+`minecraft-backup` CronJob は `suspend: true` で止めてある
+（`apps/gameservers/backup-cronjob.yaml`）。以下は復帰までの手順で、
+上から順にやること。番号内の a/b/c も順番に意味がある。
+
+**フェーズ 0: 前提確認（依存なし、いつでもできる）**
+
+7. [ ] worker-2 の**実際の空き**メモリ・ディスクを測る（有効化の前提）
+    - 割当スペック自体は既知: `k8s-worker-2` = 10 vCPU / 50GB RAM / 400GB
+      （`README.md` の「動作確認済み構成」表、ADR-0009）。未測定なのは
+      プラットフォーム＋監視＋VoiceVox を引いた**実際の空き**の方。
+      ```bash
+      kubectl describe node k8s-worker-2 | grep -A5 "Allocated resources"
+      ssh <worker-2> df -h /opt/local-path-provisioner
+      ```
+    - 測ったら本 ADR の「問題 3」と ADR-0003 に実測値を追記する。
+
+**フェーズ 1: Secret（2 つを必ず同じ値で。片方だけ作らない）**
+
+8. [ ] RCON パスワードを 1 つ決め、`apps/gameservers` と `apps/angel-bot-shared` の
+    両方に同じ値で封入する（homelab-gitops で実行）:
+    ```bash
+    make seal-minecraft-rcon PASSWORD='<十分長いランダム文字列>'
+    make seal-angel-bot TOKEN='<Discord bot token>' \
+                        OPENAI_KEY='<sk-...>' \
+                        RCON='<上と同じ値>'
+    make seal-ghcr-ns NS=angel-bot PAT='<GitHub PAT: packages:read>'
+    make seal-angel-watchdog URL='<Discord webhook URL>'
+    ```
+    生成後、`apps/gameservers/kustomization.yaml` と
+    `apps/angel-bot-shared/kustomization.yaml` のコメントアウトされた
+    `resources` 行を外して commit/push（ファイルが無いままコメントを外すと
+    Argo が Degraded になるので、コメント解除は生成の**後**）。
+    値が食い違う・空のままだと Minecraft は起動できても bot からは
+    人数が取れず、無人自動停止もバックアップ前後の save-all も
+    **黙って**動かなくなる（ログにも出ない。Pod は Healthy に見える）。
+
+**フェーズ 2: Discord 側の設定**
+
+9. [ ] Developer Portal → Bot → **MESSAGE CONTENT INTENT** を有効化
+10. [ ] サーバーに `tenshi-admin` ロールを作成し、操作させたい人に付与
+    （サーバーのオーナー自身は無くても操作できる）
+11. [ ] `apps/angel-bot/values-prod.yaml` の `allowedGuildIds` に自分の
+    サーバー ID を設定する。**空のままだと bot を招待した任意のサーバーの
+    オーナーが `/game stop` 等を実行できてしまう**（フェイルオープン設計）
+12. [ ] 同ファイルの `alertChannelId` に通知チャンネル ID を設定する。
+    空のままだと無人自動停止が Discord 上で完全に無言になる
+
+**フェーズ 3: 公開経路（Cloudflare。トンネル自体は稼働済み、Git に対応
+    マニフェストは無いのでダッシュボード側の作業）**
+
+13. [ ] 公開ホスト名を決める（`mc.example.com` はプレースホルダ）
+14. [ ] Zero Trust → 既存トンネルに TCP ルート
+    (`tcp://minecraft.gameservers.svc.cluster.local:25565`) を追加し、
+    Access アプリケーションで許可メールを登録する
+15. [ ] `runbook`（`game-server-ops.md`）と本 ADR に残る `mc.example.com` を
+    決めた実ホスト名に置換し、`values-prod.yaml` の `notes` に反映する
+16. [ ] 参加者に `cloudflared access tcp` の導入手順を配布する
+
+**フェーズ 4: 初回起動（ワールドと RCON 接続の実地検証）**
+
+17. [ ] `/game start minecraft` を実行し、ワールドと PVC `data-minecraft-0`
+    を初めて作る。起動後 `/game status` で人数が表示される（＝RCON が
+    実際に通っている）ことを確認する
+18. [ ] cloudflared 経由で実際に接続できることを確認する
+19. [ ] 無人 30 分で自動停止し、`alertChannelId` に通知が来ることを確認する
+    （フェーズ 2 の 12 が未設定だと無言で止まるだけになる）
+20. [ ] `/game logs`・`/game stop`・`/game backup` も一度ずつ実機で通す
+
+**フェーズ 5: バックアップの再開**
+
+21. [ ] `apps/gameservers/backup-cronjob.yaml` の `suspend: true` を
+    `false` に戻す（ファイル先頭のコメントに再開手順あり。
+    **フェーズ 4 の初回起動より前に戻すと、PVC も Secret も無く
+    毎晩 Pending の Job が居座り続けるので、この順序を守ること**）
+22. [ ] `kubectl -n gameservers create job --from=cronjob/minecraft-backup backup-test`
+    で手動 1 回実行し、`/backups` に `.tgz` ができることを確認する
+
+**フェーズ 6: 復元訓練**
+
+23. [ ] バックアップからワールドを復元する手順を一度試す
+    （試していない手順は手順ではない。`game-server-ops.md` の復元節参照）
+
+**あとで見直す（Minecraft 稼働開始の前提ではない）**
+
+- バックアップの R2（オフサイト）転送。現状は worker-2 のノード内 PVC のみで、
+  ノード全損でワールドとバックアップが両方消える（Consequences に記載済み）。
+- New Relic にゲームサーバー固有のメトリクス（人数・RCON 疎通・無人経過時間）
+  を出す。現状は電源状態しか監視できていない。
+- bot コード側の既知の不具合（手動バックアップの Job 名衝突、RCON 失敗が
+  debug ログでしか見えない、等）は
+  [`angel-girl-discord-bot/docs/known-issues.md`](https://github.com/tukapai/angel-girl-discord-bot/blob/main/docs/known-issues.md)
+  にまとめてある。

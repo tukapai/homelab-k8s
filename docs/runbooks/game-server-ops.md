@@ -114,9 +114,30 @@ Discord から `/game backup minecraft`。CronJob をテンプレートに Job �
 
 ### 中身を見る
 
+> `kubectl debug --target` は Pod のプロセス名前空間を共有するだけで、
+> ボリュームマウントは引き継がない。minecraft コンテナ自体は
+> `/backups`（`minecraft-backups` PVC）をマウントしていないので、
+> `--target=minecraft` 越しに `/backups` を覗くことはできない。
+> PVC を直接マウントする使い捨て Pod を立てる。local-path は
+> ノードに紐づくので `nodeSelector` を worker-2 に固定すること。
+
 ```bash
-kubectl -n gameservers debug -it minecraft-0 --image=busybox --target=minecraft -- \
-  ls -lh /backups
+kubectl -n gameservers run backup-viewer --rm -it --restart=Never \
+  --image=busybox:1.36 \
+  --overrides='{
+    "spec": {
+      "nodeSelector": {"kubernetes.io/hostname": "k8s-worker-2"},
+      "containers": [{
+        "name": "backup-viewer",
+        "image": "busybox:1.36",
+        "command": ["sh"],
+        "stdin": true,
+        "tty": true,
+        "volumeMounts": [{"name": "backups", "mountPath": "/backups"}]
+      }],
+      "volumes": [{"name": "backups", "persistentVolumeClaim": {"claimName": "minecraft-backups"}}]
+    }
+  }' -- sh -c "ls -lh /backups"
 ```
 
 ### 復元
