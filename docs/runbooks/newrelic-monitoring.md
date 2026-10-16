@@ -48,6 +48,9 @@ Kubernetes 自体
 | `angel_bot_command_invocations_total` / `_errors_total` | counter | `command` | コマンド |
 | `angel_bot_gateway_reconnects_total` | counter | — | 再接続回数 |
 | `angel_bot_game_actions_total` / `_failures_total` | counter | `server`, `action` | ゲームサーバー操作 |
+| `angel_bot_game_server_players` | gauge | `server` | 接続中プレイヤー数（2026-10-16 追加） |
+| `angel_bot_game_server_rcon_up` | gauge | `server` | RCON に接続できるか（1/0。2026-10-16 追加） |
+| `angel_bot_game_server_idle_minutes` | gauge | `server` | 最後に誰か居た時刻からの経過分（2026-10-16 追加） |
 
 一度も記録されていないカウンタも **0 を送る**ようにしてある。
 「まだ失敗 0 件」と「そもそも届いていない」を区別するため。
@@ -188,6 +191,22 @@ WHERE service.name = 'angel-bot'
 FACET server, action
 ```
 閾値: `above 0`（RBAC 不足や namespace 誤りは即わかる）
+
+### 3-10. RCON が繋がっていない（稼働中なのに人数が取れない）
+
+```sql
+SELECT latest(angel_bot_game_server_rcon_up)
+FROM Metric
+WHERE service.name = 'angel-bot'
+FACET server
+```
+閾値: `below 1` / `for at least 10 minutes`。
+
+稼働中に RCON が繋がらないと、人数表示だけでなく無人自動停止・
+save-all・save-off/save-on も黙って無効になる
+（`angel-girl-discord-bot/docs/known-issues.md` 参照。ログは
+`logger.warning` に上げてあるので、このアラートが鳴ったら
+bot の stdout/New Relic Logs で `RCON` を検索すると詳細が見える）。
 
 ---
 
