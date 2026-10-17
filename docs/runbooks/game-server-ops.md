@@ -63,6 +63,34 @@ cloudflared access tcp --hostname mc.example.com --url localhost:25565
    これは天使ちゃん専用で、外に出す理由が無い。
    そのために Service を `minecraft` と `minecraft-rcon` に分けてある。
 
+## Valheim（2026-10-17 追加）
+
+Minecraft と違い、Cloudflare の設定は**不要**。`/game start valheim` で
+起動したら、サーバーが Valheim 本体の設定（`CROSSPLAY=true`）に従って
+自分から PlayFab のリレーに繋ぎに行く。
+
+### 参加者向け: 繋ぎ方
+
+1. Valheim を起動し、「クロスプレイに参加」を選ぶ
+2. 参加コード（join code）を聞いて入力する。参加コードは Valheim 側が
+   発行するもので、天使ちゃんはまだこれを表示できない
+   （`/game status valheim` には出てこない。起動した人がゲーム内の
+   サーバーリストやログから確認すること）
+3. パスワードを聞いて入力する（`make seal-valheim-password` で設定した値）
+
+### 分かっていること（Minecraft との違い）
+
+- **人数が表示されない。無人でも自動停止しない。** RCON 相当の仕組みが
+  無いため（ADR-0013 参照）。遊び終わったら `/game stop valheim` を
+  手で叩くこと。忘れると worker-2 のメモリを無駄に占有し続ける。
+- **ヘルスチェックが無い。** `/game status` が 🟢 になっても、
+  初回起動時は SteamCMD のダウンロードがまだ終わっていないことがある。
+  数分待ってから接続を試す。
+- **`/game backup valheim` は使えない。** バックアップはコンテナ内の
+  supervisor が 6 時間毎に自動で行う（`/config/backups` に zip）。
+  手動で即時バックアップしたい場合は `kubectl exec` で
+  `supervisorctl` 経由になるが、現時点では手順を整備していない。
+
 ## kubectl での直接操作
 
 天使ちゃんが落ちているときの代替手段。
@@ -196,16 +224,32 @@ kubectl -n gameservers scale statefulset/minecraft --replicas=1
 | プレイヤー数が出ない | RCON に繋がっていない | RCON パスワードが bot 側と一致しているか確認（`make seal-angel-bot` の `RCON=`）|
 | 遊んでいるのに自動停止した | 人数取得が失敗していた | 本来は「人数不明なら止めない」実装。`/game logs` と bot のログを確認 |
 | `cloudflared access tcp` が繋がらない | Access の許可 / トンネル設定 | Zero Trust ダッシュボードで該当アプリの許可メールを確認 |
+| Valheim の人数が表示されない | 仕様（RCON 相当が無い） | 対処不要。遊び終わったら `/game stop valheim` を手で |
+| Valheim が crossplay で繋がらない | PlayFab リレー側の障害 | https://status.playfab.com を確認。Steam のみなら `CROSSPLAY=false` も検討 |
 
 ## ゲームを増やす
 
-コード変更は不要（ADR-0013）。
+起動・停止・状態確認・RBAC は registry にエントリを足すだけでコード変更が
+不要（ADR-0013。実際に Valheim を足して検証済み）。
+ただし **公開方式だけは足す前に必ず確認する**: そのゲームが
+TCP か UDP か。Minecraft は TCP なので Cloudflare Tunnel の
+Published application routes（ADR-0013 の方式 A）がそのまま使えたが、
+UDP のゲーム（Valheim 含め大半の Steam 系デディケートサーバー）は
+Tunnel の対象外。`minecraft.yaml` をそのまま複製すると
+「Pod は起動するが誰も繋げない」になる。
+`apps/gameservers/valheim.yaml` の先頭コメントが UDP の場合の
+代替案（crossplay/PlayFab リレー、ポート転送を使う等）の実例。
 
 1. `homelab-gitops/apps/gameservers/` にマニフェストを足す
-   （`minecraft.yaml` を複製。**`replicas: 0` を守ること**）
+   （`minecraft.yaml` か `valheim.yaml` を、プロトコルが近い方を複製。
+   **`replicas: 0` を守ること**）
 2. `kustomization.yaml` の `resources` に足す
 3. `homelab-gitops/apps/angel-bot/values-prod.yaml` の
-   `gameServers.registry.servers` にエントリを足す
+   `gameServers.registry.servers` にエントリを足す。
+   そのゲームに RCON（または類する TCP ベースの管理プロトコル）が
+   無ければ `rcon:` は書かない（`None` 扱いになり、人数表示・無人自動停止・
+   `/game backup` が自動的に無効化される。コードは触らなくてよいが
+   機能は無いことを使う人に伝えること）
 4. commit / push → Argo が同期 → bot が ConfigMap を読み直す
    （bot の Pod は ConfigMap の checksum で再起動する）
 
