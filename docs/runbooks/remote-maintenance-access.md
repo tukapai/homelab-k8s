@@ -44,6 +44,12 @@ Zero Trust → **Access → Applications → Add an application → Self-hosted*
   - Session duration: 好みで（例: 24時間）
 - 認証方法（Login method）はメール OTP か、既に使っている IdP（Google 等）でよい
 
+> **注意（Argo CD など Web 用アプリと混ぜない）**: SSH 用の Access アプリケーションは
+> 「ブラウザベースの SSH」(Browser rendering = SSH) を ON にする。Argo CD のような HTTPS の
+> Web 用ホスト名は **別の Self-hosted アプリケーション**にし、Browser rendering は **OFF**
+> にすること。ON のままだとエッジが SSH で origin に接続しようとし、cloudflared に
+> 何も届かないまま `Unable to connect to origin` になる（実際に発生）。
+
 ---
 
 ## 2. ホスト側のセットアップ（Ansible）

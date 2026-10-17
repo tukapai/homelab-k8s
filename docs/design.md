@@ -331,6 +331,17 @@ Pod / ノード単位の障害は Kubernetes が自己修復。**ホスト全損
 - 代替案: SOPS + age（age 秘密鍵 1 つで済み再構築に強い）。運用してみて
   sealing key 管理が負担なら移行
 
+### 9.1 GitOps 管理外の Secret（Argo CD 自身のブートストラップ分）
+
+Argo CD は自分自身を GitOps 管理しない（§7.3）ため、以下は `kubectl` で
+直接作成する運用（SealedSecret 化しない）:
+
+| Secret | namespace | 用途 | 再作成方法 |
+|---|---|---|---|
+| `repo-creds-tukapai` | `argocd` | private リポの clone 認証（PAT）| §13 の PAT ローテーション手順 |
+| `argocd-cm` / `argocd-rbac-cm` / `argocd-secret`（`viewer` アカウント）| `argocd` | 閲覧専用ローカルアカウント `viewer`（`accounts.viewer: login`、`g, viewer, role:readonly`）。パスワードは bcrypt ハッシュを `argocd-secret` の `accounts.viewer.password` に設定。再作成は `argocd account bcrypt` でハッシュを作って patch | 
+| `argocd-server-tls` | `argocd` | Argo CD GUI の TLS 証明書（Cloudflare Origin CA、自己署名の代替）| ローカルで秘密鍵を再生成し CSR を Cloudflare Origin CA に提出 → `kubectl -n argocd create secret tls argocd-server-tls --cert=<cert> --key=<key>` → `kubectl -n argocd rollout restart deployment argocd-server`。秘密鍵はどのリポジトリにもコミットしない（ローカルのみ保持）|
+
 ---
 
 ## 10. 環境（dev / prod）
@@ -425,6 +436,9 @@ KVM ホスト（A / B）には NR Infra agent と Instana host agent の両方�
 - ✅ 2 台目物理ノード（ホスト B / macvtap）→ 3 ノード化
 - ✅ 監視（New Relic 常用 + Instana 評価）両方稼働
 - ✅ `GITOPS_TOKEN` 設定（CI の bump-gitops が image タグを sha に自動更新、動作確認済み）
+- ✅ リモートメンテナンスアクセス（ADR-0011、Cloudflare Access + cloudflared、両ホスト導入済み）
+- ✅ Argo CD GUI に Cloudflare Origin CA 証明書を適用（`argocd-server-tls` Secret、自己署名から切替）
+- ✅ Argo CD GUI を Cloudflare Access 経由で公開（`argocd.nekonekoinsurance.com`、閲覧専用 `viewer` アカウント追加）
 
 ### 未決 / TODO
 
@@ -438,6 +452,7 @@ KVM ホスト（A / B）には NR Infra agent と Instana host agent の両方�
 - ゲームサーバー（Minecraft）の有効化 — 現在メンテナンス中（一度も起動していない）。
   残作業は [ADR-0013](adr/0013-game-servers.md) の Action Items 7 以降
   （Secret 封入・Discord 設定・Cloudflare 公開経路・初回起動・バックアップ再開・復元訓練）
+- Argo CD `admin` の初期パスワード変更 or `admin` 無効化（初期パスワードがチャットに出たため）
 
 ---
 
