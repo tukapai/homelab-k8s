@@ -15,17 +15,20 @@ ADR-0003 の可用性戦略「バックアップ + IaC 再構築」の具体。�
 | Redis（queue 用途がある場合）| RDB/AOF を CronJob で R2 へ | R2 | 1 時間ごと等 |
 | PV（上記以外の PVC）| Velero（任意）| R2 | 日次 |
 | Minecraft ワールド（`data-minecraft-0`）| itzg/mc-backup（CronJob）| **worker-2 ノード内 PVC のみ** | 日次（現在 suspend 中） |
+| Valheim ワールド（`config-valheim-0`）| コンテナ内 supervisor が自動 zip | **worker-2 ノード内 PVC のみ** | 6 時間毎 |
 
 **原則: 状態は「Git」か「オブジェクトストレージ」のどちらかにあり、
 物理ホストが消えても復元できること。**
 
-> ⚠️ **Minecraft はこの原則の例外。** ワールド本体（`data-minecraft-0`）も
-> バックアップ（`minecraft-backups`）も同じ worker-2 の local-path PVC にあり、
+> ⚠️ **Minecraft と Valheim はこの原則の例外。** どちらもワールドと
+> バックアップが同じ worker-2 の local-path PVC にあり、
 > オブジェクトストレージへの退避が無い。**worker-2 が全損すると両方消える。**
 > R2 転送は ADR-0013 の「あとで見直す」に TODO として記録済みで未着手
-> （`homelab-gitops/apps/gameservers/backup-cronjob.yaml` 先頭のコメント参照）。
-> 復旧手順としても本 runbook には Minecraft の記載が無い — 現状「復旧できない」
-> が前提なので、全損復旧の通し訓練でもワールドは対象外になる。
+> （`homelab-gitops/apps/gameservers/backup-cronjob.yaml` 先頭のコメント参照。
+> Valheim はバックアップの仕組み自体がコンテナ内で完結しており、
+> 外部 CronJob が無いので同じ R2 転送の仕組みをそのまま使えない）。
+> 復旧手順としても本 runbook にはどちらの記載も無い — 現状「復旧できない」
+> が前提なので、全損復旧の通し訓練でも両方のワールドは対象外になる。
 
 ## Sealed Secrets の sealing key（最重要）
 

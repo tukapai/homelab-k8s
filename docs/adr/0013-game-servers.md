@@ -228,8 +228,14 @@ A の代償は「参加者が cloudflared を入れる」ことだけで、
 - 参加者が増えて cloudflared の摩擦が問題になったら B（ポート転送）へ。
   その際は DDoS 対策と fail2ban 相当を併せて検討する。
 - バックアップの R2 転送（nekoneko の PG バックアップと同じ R2 待ち）。
-- 2 つ目のゲーム（Valheim / Terraria 等）を足すときに、
-  registry だけで足りるか（プロバイダ抽象が妥当だったか）を検証する。
+- ~~2 つ目のゲーム（Valheim / Terraria 等）を足すときに、
+  registry だけで足りるか（プロバイダ抽象が妥当だったか）を検証する。~~
+  2026-10-17 検証済み: Valheim を追加した。**部分的に成立**。
+  起動・停止・状態の骨格（StatefulSet の 0↔1、Pod 状態判定、RBAC）は
+  本当に registry だけで足りた。足りなかったのは RCON 前提の部分
+  （人数表示・無人自動停止・`/game backup`）— Valheim には Source RCON
+  相当の仕組みが無く、`RconConfig` を前提にしたコードはそのまま使えない。
+  詳細は Action Item 24 と `apps/gameservers/valheim.yaml` のコメント。
 - worker-2 のメモリが厳しければ、Minecraft 起動中だけ VoiceVox を
   `replicas: 0` にするなどの相互排他を検討する。
 
@@ -329,6 +335,29 @@ A の代償は「参加者が cloudflared を入れる」ことだけで、
 
 23. [ ] バックアップからワールドを復元する手順を一度試す
     （試していない手順は手順ではない。`game-server-ops.md` の復元節参照）
+
+### Valheim（2026-10-17 追加。2 つ目のゲーム）
+
+公開方式が Minecraft と根本的に違う。Valheim のデディケートサーバーは UDP
+（2456-2458）で、Cloudflare Tunnel の Published application routes は
+UDP に対応していない（本 ADR の「公開方式（本題）」で検討した A/B のどちらでもない、
+**第 3 の方式**: `CROSSPLAY=true` でサーバー自身が PlayFab のリレーに
+アウトバウンド接続し、参加者は参加コードで繋ぐ。ポートを 1 つも開けずに済み、
+ADR-0002 の方針はそのまま維持できる）。詳細は `apps/gameservers/valheim.yaml`
+のコメント。
+
+24. [ ] `make seal-valheim-password PASSWORD='<5文字以上>'` → 生成されたファイルを
+    commit → `apps/gameservers/kustomization.yaml` のコメントを外す
+25. [ ] worker-2 の空き（Action Item 7 で測った値）に Valheim の
+    requests（1 CPU / 3Gi）を乗せても問題ないか確認する
+    （Minecraft と同時に動かす前提で見ること）
+26. [ ] `/game start valheim` → SteamCMD の初回ダウンロードが終わるまで待つ
+    （ヘルスチェックが無いため `/game status` の 🟢 だけでは判断できない。
+    数分待ってから参加コードでの接続を試す）
+27. [ ] 人数表示・無人自動停止が効かないこと（仕様）を把握した上で運用する。
+    遊び終わったら `/game stop valheim` を忘れずに手で叩く
+28. [ ] コンテナ内 supervisor の自動バックアップ（6 時間毎、`/config/backups`）が
+    実際に増えていることを確認する（`/game backup valheim` は使えない）
 
 **あとで見直す（Minecraft 稼働開始の前提ではない）**
 
